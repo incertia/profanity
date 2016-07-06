@@ -1,7 +1,7 @@
 /*
  * muc.c
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -723,7 +723,7 @@ muc_jid_autocomplete_add_all(const char *const room, GSList *jids)
         if (chat_room->jid_ac) {
             GSList *curr_jid = jids;
             while (curr_jid) {
-                char *jid = curr_jid->data;
+                const char *jid = curr_jid->data;
                 Jid *jidp = jid_create(jid);
                 if (jidp) {
                     if (jidp->barejid) {

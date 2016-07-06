@@ -6,12 +6,14 @@ core_sources = \
 	src/chat_state.h src/chat_state.c \
 	src/resource.c src/resource.h \
 	src/roster_list.c src/roster_list.h \
-	src/xmpp/xmpp.h src/xmpp/capabilities.c src/xmpp/connection.c \
+	src/xmpp/xmpp.h src/xmpp/capabilities.c src/xmpp/session.c \
+	src/xmpp/connection.h src/xmpp/connection.c \
 	src/xmpp/iq.c src/xmpp/message.c src/xmpp/presence.c src/xmpp/stanza.c \
 	src/xmpp/stanza.h src/xmpp/message.h src/xmpp/iq.h src/xmpp/presence.h \
-	src/xmpp/capabilities.h src/xmpp/connection.h \
+	src/xmpp/capabilities.h src/xmpp/session.h \
 	src/xmpp/roster.c src/xmpp/roster.h \
 	src/xmpp/bookmark.c src/xmpp/bookmark.h \
+	src/xmpp/blocking.c src/xmpp/blocking.h \
 	src/xmpp/form.c src/xmpp/form.h \
 	src/event/server_events.c src/event/server_events.h \
 	src/event/client_events.c src/event/client_events.h \
@@ -28,10 +30,13 @@ core_sources = \
 	src/ui/privwin.c \
 	src/ui/mucconfwin.c \
 	src/ui/xmlwin.c \
-	src/command/command.h src/command/command.c \
-	src/command/commands.h src/command/commands.c \
+	src/command/cmd_defs.h src/command/cmd_defs.c \
+	src/command/cmd_funcs.h src/command/cmd_funcs.c \
+	src/command/cmd_ac.h src/command/cmd_ac.c \
 	src/tools/parser.c \
 	src/tools/parser.h \
+	src/tools/http_upload.c \
+	src/tools/http_upload.h \
 	src/tools/p_sha1.h src/tools/p_sha1.c \
 	src/tools/autocomplete.c src/tools/autocomplete.h \
 	src/tools/tinyurl.c src/tools/tinyurl.h \
@@ -41,7 +46,15 @@ core_sources = \
 	src/config/account.c src/config/account.h \
 	src/config/preferences.c src/config/preferences.h \
 	src/config/theme.c src/config/theme.h \
-	src/config/scripts.c src/config/scripts.h
+	src/config/scripts.c src/config/scripts.h \
+	src/plugins/plugins.h src/plugins/plugins.c \
+	src/plugins/api.h src/plugins/api.c \
+	src/plugins/callbacks.h src/plugins/callbacks.c \
+	src/plugins/autocompleters.c src/plugins/autocompleters.h \
+	src/plugins/themes.c src/plugins/themes.h \
+	src/plugins/settings.c src/plugins/settings.h \
+	src/plugins/disco.c src/plugins/disco.h \
+	src/tray.h src/tray.c
 
 unittest_sources = \
 	src/contact.c src/contact.h src/common.c \
@@ -55,8 +68,9 @@ unittest_sources = \
 	src/ui/ui.h \
 	src/otr/otr.h \
 	src/pgp/gpg.h \
-	src/command/command.h src/command/command.c \
-	src/command/commands.h src/command/commands.c \
+	src/command/cmd_defs.h src/command/cmd_defs.c \
+	src/command/cmd_funcs.h src/command/cmd_funcs.c \
+	src/command/cmd_ac.h src/command/cmd_ac.c \
 	src/tools/parser.c \
 	src/tools/parser.h \
 	src/tools/p_sha1.h src/tools/p_sha1.c \
@@ -69,13 +83,22 @@ unittest_sources = \
 	src/config/theme.c src/config/theme.h \
 	src/config/scripts.c src/config/scripts.h \
 	src/config/conflists.c src/config/conflists.h \
+	src/plugins/plugins.h src/plugins/plugins.c \
+	src/plugins/api.h src/plugins/api.c \
+	src/plugins/callbacks.h src/plugins/callbacks.c \
+	src/plugins/autocompleters.c src/plugins/autocompleters.h \
+	src/plugins/themes.c src/plugins/themes.h \
+	src/plugins/settings.c src/plugins/settings.h \
+	src/plugins/disco.c src/plugins/disco.h \
 	src/window_list.c src/window_list.h \
 	src/event/server_events.c src/event/server_events.h \
 	src/event/client_events.c src/event/client_events.h \
+	src/tray.h src/tray.c \
 	tests/unittests/xmpp/stub_xmpp.c \
 	tests/unittests/ui/stub_ui.c \
 	tests/unittests/log/stub_log.c \
 	tests/unittests/config/stub_accounts.c \
+	tests/unittests/tools/stub_http_upload.c \
 	tests/unittests/helpers.c tests/unittests/helpers.h \
 	tests/unittests/test_form.c tests/unittests/test_form.h \
 	tests/unittests/test_common.c tests/unittests/test_common.h \
@@ -88,7 +111,7 @@ unittest_sources = \
 	tests/unittests/test_preferences.c tests/unittests/test_preferences.h \
 	tests/unittests/test_server_events.c tests/unittests/test_server_events.h \
 	tests/unittests/test_muc.c tests/unittests/test_muc.h \
-	tests/unittests/test_cmd_statuses.c tests/unittests/test_cmd_statuses.h \
+	tests/unittests/test_cmd_presence.c tests/unittests/test_cmd_presence.h \
 	tests/unittests/test_cmd_alias.c tests/unittests/test_cmd_alias.h \
 	tests/unittests/test_cmd_connect.c tests/unittests/test_cmd_connect.h \
 	tests/unittests/test_cmd_rooms.c tests/unittests/test_cmd_rooms.h \
@@ -114,9 +137,19 @@ functionaltest_sources = \
 	tests/functionaltests/test_receipts.c tests/functionaltests/test_receipts.h \
 	tests/functionaltests/test_roster.c tests/functionaltests/test_roster.h \
 	tests/functionaltests/test_software.c tests/functionaltests/test_software.h \
+	tests/functionaltests/test_muc.c tests/functionaltests/test_muc.h \
+	tests/functionaltests/test_disconnect.c tests/functionaltests/test_disconnect.h \
 	tests/functionaltests/functionaltests.c
 
 main_source = src/main.c
+
+python_sources = \
+	src/plugins/python_plugins.h src/plugins/python_plugins.c \
+	src/plugins/python_api.h src/plugins/python_api.c
+
+c_sources = \
+	src/plugins/c_plugins.h src/plugins/c_plugins.c \
+	src/plugins/c_api.h src/plugins/c_api.c
 
 git_include = src/gitversion.h
 
@@ -132,10 +165,22 @@ otr3_sources = \
 otr4_sources = \
 	src/otr/otrlib.h src/otr/otrlibv4.c src/otr/otr.h src/otr/otr.c
 
+if BUILD_PYTHON_API
+core_sources += $(python_sources)
+unittest_sources += $(python_sources)
+endif
+
+if BUILD_C_API
+core_sources += $(c_sources)
+unittest_sources += $(c_sources)
+endif
+
 otr_unittest_sources = \
 	tests/unittests/otr/stub_otr.c
 
 themes_sources = themes/*
+
+icons_sources = icons/*
 
 script_sources = bootstrap.sh configure-debug install-all.sh
 
@@ -165,6 +210,17 @@ endif
 if INCLUDE_GIT_VERSION
 BUILT_SOURCES = $(git_include)
 endif
+profanity_iconsdir = @ICONS_PATH@
+profanity_icons_DATA = $(icons_sources)
+
+if BUILD_C_API
+lib_LTLIBRARIES = libprofanity.la
+libprofanity_la_LDFLAGS=-avoid-version -shared -no-undefined
+libprofanity_la_SOURCES = src/plugins/profapi.c
+
+library_includedir=$(includedir)
+library_include_HEADERS = src/plugins/profapi.h
+endif
 
 TESTS = tests/unittests/unittests
 check_PROGRAMS = tests/unittests/unittests
@@ -184,7 +240,7 @@ endif
 
 man_MANS = $(man_sources)
 
-EXTRA_DIST = $(man_sources) $(themes_sources) $(script_sources) profrc.example LICENSE.txt
+EXTRA_DIST = $(man_sources) $(icons_sources) $(themes_sources) $(script_sources) profrc.example LICENSE.txt
 
 if INCLUDE_GIT_VERSION
 EXTRA_DIST += .git/HEAD .git/index

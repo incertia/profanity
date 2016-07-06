@@ -1,7 +1,7 @@
 /*
  * roster_list.h
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -50,8 +50,8 @@ gboolean roster_update_presence(const char *const barejid, Resource *resource, G
 PContact roster_get_contact(const char *const barejid);
 gboolean roster_contact_offline(const char *const barejid, const char *const resource, const char *const status);
 void roster_reset_search_attempts(void);
-void roster_init(void);
-void roster_free(void);
+void roster_create(void);
+void roster_destroy(void);
 void roster_change_name(PContact contact, const char *const new_name);
 void roster_remove(const char *const name, const char *const barejid);
 void roster_update(const char *const barejid, const char *const name, GSList *groups, const char *const subscription,
@@ -59,17 +59,16 @@ void roster_update(const char *const barejid, const char *const name, GSList *gr
 gboolean roster_add(const char *const barejid, const char *const name, GSList *groups, const char *const subscription,
     gboolean pending_out);
 char* roster_barejid_from_name(const char *const name);
-GSList* roster_get_contacts(roster_ord_t order, gboolean include_offline);
+GSList* roster_get_contacts(roster_ord_t order);
 GSList* roster_get_contacts_online(void);
 gboolean roster_has_pending_subscriptions(void);
 char* roster_contact_autocomplete(const char *const search_str);
 char* roster_fulljid_autocomplete(const char *const search_str);
-GSList* roster_get_group(const char *const group, roster_ord_t order, gboolean include_offline);
+GSList* roster_get_group(const char *const group, roster_ord_t order);
 GSList* roster_get_groups(void);
 char* roster_group_autocomplete(const char *const search_str);
 char* roster_barejid_autocomplete(const char *const search_str);
 GSList* roster_get_contacts_by_presence(const char *const presence);
-GSList* roster_get_nogroup(roster_ord_t order, gboolean include_offline);
 char* roster_get_msg_display_name(const char *const barejid, const char *const resource);
 
 #endif

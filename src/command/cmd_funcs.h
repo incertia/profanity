@@ -1,7 +1,7 @@
 /*
- * commands.h
+ * cmd_funcs.h
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -32,8 +32,8 @@
  *
  */
 
-#ifndef COMMANDS_H
-#define COMMANDS_H
+#ifndef CMD_FUNCS_H
+#define CMD_FUNCS_H
 
 #include "ui/win_types.h"
 
@@ -42,7 +42,7 @@ typedef struct cmd_help_t {
     const gchar *tags[20];
     const gchar *synopsis[50];
     const gchar *desc;
-    const gchar *args[50][2];
+    const gchar *args[128][2];
     const gchar *examples[20];
 } CommandHelp;
 
@@ -50,27 +50,30 @@ typedef struct cmd_help_t {
  * Command structure
  *
  * cmd - The command string including leading '/'
- * func - The function to execute for the command
  * parser - The function used to parse arguments
  * min_args - Minimum number of arguments
  * max_args - Maximum number of arguments
+ * setting_func - Function to display current settings to the console
+ * sub_funcs - Optional list of functions mapped to the first argument
+ * func - Main function to call when no arguments, or sub_funcs not implemented
  * help - A help struct containing usage info etc
  */
 typedef struct cmd_t {
     gchar *cmd;
-    gboolean (*func)(ProfWin *window, const char *const command, gchar **args);
     gchar** (*parser)(const char *const inp, int min, int max, gboolean *result);
     int min_args;
     int max_args;
     void (*setting_func)(void);
+    void *sub_funcs[50][2];
+    gboolean (*func)(ProfWin *window, const char *const command, gchar **args);
     CommandHelp help;
 } Command;
 
-gboolean cmd_execute_alias(ProfWin *window, const char *const inp, gboolean *ran);
-gboolean cmd_execute_default(ProfWin *window, const char *inp);
+
+gboolean cmd_process_input(ProfWin *window, char *inp);
+void cmd_execute_connect(ProfWin *window, const char *const account);
 
 gboolean cmd_about(ProfWin *window, const char *const command, gchar **args);
-gboolean cmd_account(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_autoaway(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_autoconnect(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_autoping(ProfWin *window, const char *const command, gchar **args);
@@ -82,13 +85,14 @@ gboolean cmd_chlog(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_clear(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_close(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_connect(ProfWin *window, const char *const command, gchar **args);
-gboolean cmd_tls(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_decline(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_disco(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_sendfile(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_lastactivity(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_disconnect(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_dnd(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_flash(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_tray(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_gone(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_grlog(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_group(ProfWin *window, const char *const command, gchar **args);
@@ -107,7 +111,6 @@ gboolean cmd_msg(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_nick(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_notify(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_online(ProfWin *window, const char *const command, gchar **args);
-gboolean cmd_otr(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_pgp(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_outtype(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_prefs(ProfWin *window, const char *const command, gchar **args);
@@ -122,7 +125,6 @@ gboolean cmd_software(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_splash(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_states(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_status(ProfWin *window, const char *const command, gchar **args);
-gboolean cmd_statuses(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_sub(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_theme(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_tiny(ProfWin *window, const char *const command, gchar **args);
@@ -130,7 +132,6 @@ gboolean cmd_titlebar(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_vercheck(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_who(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_win(ProfWin *window, const char *const command, gchar **args);
-gboolean cmd_wins(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_xa(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_alias(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_xmlconsole(ProfWin *window, const char *const command, gchar **args);
@@ -151,6 +152,51 @@ gboolean cmd_inpblock(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_encwarn(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_script(ProfWin *window, const char *const command, gchar **args);
 gboolean cmd_export(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_charset(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_console(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_plugins(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_blocked(ProfWin *window, const char *const command, gchar **args);
+
+gboolean cmd_account(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_account_list(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_account_show(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_account_add(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_account_remove(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_account_enable(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_account_disable(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_account_rename(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_account_default(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_account_set(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_account_clear(ProfWin *window, const char *const command, gchar **args);
+
+gboolean cmd_tls_certpath(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_tls_trust(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_tls_trusted(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_tls_revoke(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_tls_show(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_tls_cert(ProfWin *window, const char *const command, gchar **args);
+
+gboolean cmd_otr_char(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_otr_log(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_otr_libver(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_otr_policy(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_otr_gen(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_otr_myfp(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_otr_theirfp(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_otr_start(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_otr_end(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_otr_trust(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_otr_untrust(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_otr_secret(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_otr_question(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_otr_answer(ProfWin *window, const char *const command, gchar **args);
+
+gboolean cmd_wins(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_wins_unread(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_wins_tidy(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_wins_prune(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_wins_swap(ProfWin *window, const char *const command, gchar **args);
+gboolean cmd_wins_autotidy(ProfWin *window, const char *const command, gchar **args);
 
 gboolean cmd_form_field(ProfWin *window, char *tag, gchar **args);
 

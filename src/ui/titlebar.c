@@ -1,7 +1,7 @@
 /*
  * titlebar.c
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -403,15 +403,18 @@ _show_contact_presence(ProfChatWin *chatwin)
         theme_item_t presence_colour = THEME_TITLE_OFFLINE;
         const char *presence = "offline";
 
-        PContact contact = roster_get_contact(chatwin->barejid);
-        if (contact) {
-            if (resource) {
-                Resource *resourcep = p_contact_get_resource(contact, resource);
-                if (resourcep) {
-                    presence = string_from_resource_presence(resourcep->presence);
+        jabber_conn_status_t conn_status = connection_get_status();
+        if (conn_status == JABBER_CONNECTED) {
+            PContact contact = roster_get_contact(chatwin->barejid);
+            if (contact) {
+                if (resource) {
+                    Resource *resourcep = p_contact_get_resource(contact, resource);
+                    if (resourcep) {
+                        presence = string_from_resource_presence(resourcep->presence);
+                    }
+                } else {
+                    presence = p_contact_presence(contact);
                 }
-            } else {
-                presence = p_contact_presence(contact);
             }
         }
 

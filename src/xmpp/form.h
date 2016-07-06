@@ -1,7 +1,7 @@
 /*
  * form.h
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -37,7 +37,17 @@
 
 #include "xmpp/xmpp.h"
 
+#ifdef HAVE_LIBMESODE
+#include <mesode.h>
+#endif
+#ifdef HAVE_LIBSTROPHE
+#include <strophe.h>
+#endif
+
 DataForm* form_create(xmpp_stanza_t *const stanza);
 xmpp_stanza_t* form_create_submission(DataForm *form);
+char* form_get_form_type_field(DataForm *form);
+GSList* form_get_non_form_type_fields_sorted(DataForm *form);
+GSList* form_get_field_values_sorted(FormField *field);
 
 #endif

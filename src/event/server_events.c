@@ -1,7 +1,7 @@
 /*
  * server_events.c
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -45,9 +45,11 @@
 #include "config/account.h"
 #include "config/scripts.h"
 #include "roster_list.h"
+#include "plugins/plugins.h"
 #include "window_list.h"
 #include "config/tlscerts.h"
 #include "profanity.h"
+#include "event/client_events.h"
 
 #ifdef HAVE_LIBOTR
 #include "otr/otr.h"
@@ -59,9 +61,11 @@
 #include "ui/ui.h"
 
 void
-sv_ev_login_account_success(char *account_name, int secured)
+sv_ev_login_account_success(char *account_name, gboolean secured)
 {
     ProfAccount *account = accounts_get_account(account_name);
+
+    roster_create();
 
 #ifdef HAVE_LIBOTR
     otr_on_connect(account);
@@ -100,16 +104,80 @@ sv_ev_roster_received(void)
     if (prefs_get_boolean(PREF_ROSTER)) {
         ui_show_roster();
     }
+
+    char *account_name = session_get_account_name();
+
+#ifdef HAVE_LIBGPGME
+    // check pgp key valid if specified
+    ProfAccount *account = accounts_get_account(account_name);
+    if (account && account->pgp_keyid) {
+        char *err_str = NULL;
+        if (!p_gpg_valid_key(account->pgp_keyid, &err_str)) {
+            cons_show_error("Invalid PGP key ID specified: %s, %s", account->pgp_keyid, err_str);
+        }
+        free(err_str);
+    }
+    account_free(account);
+#endif
+
+    // send initial presence
+    resource_presence_t conn_presence = accounts_get_login_presence(account_name);
+    char *last_activity_str = accounts_get_last_activity(account_name);
+    if (last_activity_str) {
+        GDateTime *nowdt = g_date_time_new_now_utc();
+
+        GTimeVal lasttv;
+        gboolean res = g_time_val_from_iso8601(last_activity_str, &lasttv);
+        if (res) {
+            GDateTime *lastdt = g_date_time_new_from_timeval_utc(&lasttv);
+            GTimeSpan diff_micros = g_date_time_difference(nowdt, lastdt);
+            int diff_secs = (diff_micros / 1000) / 1000;
+            if (prefs_get_boolean(PREF_LASTACTIVITY)) {
+                cl_ev_presence_send(conn_presence, NULL, diff_secs);
+            } else {
+                cl_ev_presence_send(conn_presence, NULL, 0);
+            }
+            g_date_time_unref(lastdt);
+        } else {
+            cl_ev_presence_send(conn_presence, NULL, 0);
+        }
+
+        free(last_activity_str);
+        g_date_time_unref(nowdt);
+    } else {
+        cl_ev_presence_send(conn_presence, NULL, 0);
+    }
+
+    const char *fulljid = connection_get_fulljid();
+    plugins_on_connect(account_name, fulljid);
 }
 
 void
 sv_ev_lost_connection(void)
 {
     cons_show_error("Lost connection.");
-    roster_clear();
+
+#ifdef HAVE_LIBOTR
+    GSList *recipients = wins_get_chat_recipients();
+    GSList *curr = recipients;
+    while (curr) {
+        char *barejid = curr->data;
+        ProfChatWin *chatwin = wins_get_chat(barejid);
+        if (chatwin && otr_is_secure(barejid)) {
+            chatwin_otr_unsecured(chatwin);
+            otr_end_session(barejid);
+        }
+        curr = g_slist_next(curr);
+    }
+    if (recipients) {
+        g_slist_free(recipients);
+    }
+#endif
+
     muc_invites_clear();
     chat_sessions_clear();
     ui_disconnected();
+    roster_destroy();
 #ifdef HAVE_LIBGPGME
     p_gpg_on_disconnect();
 #endif
@@ -124,8 +192,7 @@ sv_ev_failed_login(void)
 }
 
 void
-sv_ev_room_invite(jabber_invite_t invite_type,
-    const char *const invitor, const char *const room,
+sv_ev_room_invite(jabber_invite_t invite_type, const char *const invitor, const char *const room,
     const char *const reason, const char *const password)
 {
     if (!muc_active(room) && !muc_invites_contain(room)) {
@@ -168,45 +235,125 @@ sv_ev_room_history(const char *const room_jid, const char *const nick,
 }
 
 void
-sv_ev_room_message(const char *const room_jid, const char *const nick,
-    const char *const message)
+sv_ev_room_message(const char *const room_jid, const char *const nick, const char *const message)
 {
-    ProfMucWin *mucwin = wins_get_muc(room_jid);
-    if (mucwin) {
-        mucwin_message(mucwin, nick, message);
-    }
-
     if (prefs_get_boolean(PREF_GRLOG)) {
-        Jid *jid = jid_create(jabber_get_fulljid());
+        Jid *jid = jid_create(connection_get_fulljid());
         groupchat_log_chat(jid->barejid, room_jid, nick, message);
         jid_destroy(jid);
     }
+
+    ProfMucWin *mucwin = wins_get_muc(room_jid);
+    if (!mucwin) {
+        return;
+    }
+
+    char *new_message = plugins_pre_room_message_display(room_jid, nick, message);
+    char *mynick = muc_nick(mucwin->roomjid);
+
+    gboolean whole_word = prefs_get_boolean(PREF_NOTIFY_MENTION_WHOLE_WORD);
+    gboolean case_sensitive = prefs_get_boolean(PREF_NOTIFY_MENTION_CASE_SENSITIVE);
+    char *message_search = case_sensitive ? strdup(new_message) : g_utf8_strdown(new_message, -1);
+    char *mynick_search = case_sensitive ? strdup(mynick) : g_utf8_strdown(mynick, -1);
+
+    GSList *mentions = NULL;
+    mentions = prof_occurrences(mynick_search, message_search, 0, whole_word, &mentions);
+    gboolean mention = g_slist_length(mentions) > 0;
+    g_free(message_search);
+    g_free(mynick_search);
+
+    GList *triggers = prefs_message_get_triggers(new_message);
+
+    mucwin_message(mucwin, nick, new_message, mentions, triggers);
+
+    g_slist_free(mentions);
+
+    ProfWin *window = (ProfWin*)mucwin;
+    int num = wins_get_num(window);
+    gboolean is_current = FALSE;
+
+    // currently in groupchat window
+    if (wins_is_current(window)) {
+        is_current = TRUE;
+        status_bar_active(num);
+
+        if ((g_strcmp0(mynick, nick) != 0) && (prefs_get_boolean(PREF_BEEP))) {
+            beep();
+        }
+
+    // not currently on groupchat window
+    } else {
+        status_bar_new(num);
+
+        if ((g_strcmp0(mynick, nick) != 0) && (prefs_get_boolean(PREF_FLASH))) {
+            flash();
+        }
+
+        cons_show_incoming_room_message(nick, mucwin->roomjid, num, mention, triggers, mucwin->unread);
+
+        mucwin->unread++;
+
+        if (mention) {
+            mucwin->unread_mentions = TRUE;
+        }
+        if (triggers) {
+            mucwin->unread_triggers = TRUE;
+        }
+    }
+
+    if (prefs_do_room_notify(is_current, mucwin->roomjid, mynick, nick, new_message, mention, triggers != NULL)) {
+        Jid *jidp = jid_create(mucwin->roomjid);
+        notify_room_message(nick, jidp->localpart, num, new_message);
+        jid_destroy(jidp);
+    }
+
+    if (triggers) {
+        g_list_free_full(triggers, free);
+    }
+
+    rosterwin_roster();
+
+    plugins_post_room_message_display(room_jid, nick, new_message);
+    free(new_message);
 }
 
 void
 sv_ev_incoming_private_message(const char *const fulljid, char *message)
 {
+    char *plugin_message =  plugins_pre_priv_message_display(fulljid, message);
+
     ProfPrivateWin *privatewin = wins_get_private(fulljid);
     if (privatewin == NULL) {
         ProfWin *window = wins_new_private(fulljid);
         privatewin = (ProfPrivateWin*)window;
     }
-    privwin_incoming_msg(privatewin, message, NULL);
+    privwin_incoming_msg(privatewin, plugin_message, NULL);
+
+    plugins_post_priv_message_display(fulljid, plugin_message);
+
+    free(plugin_message);
+    rosterwin_roster();
 }
 
 void
 sv_ev_delayed_private_message(const char *const fulljid, char *message, GDateTime *timestamp)
 {
+    char *new_message = plugins_pre_priv_message_display(fulljid, message);
+
     ProfPrivateWin *privatewin = wins_get_private(fulljid);
     if (privatewin == NULL) {
         ProfWin *window = wins_new_private(fulljid);
         privatewin = (ProfPrivateWin*)window;
     }
-    privwin_incoming_msg(privatewin, message, timestamp);
+    privwin_incoming_msg(privatewin, new_message, timestamp);
+
+    plugins_post_priv_message_display(fulljid, new_message);
+
+    free(new_message);
 }
 
 void
-sv_ev_outgoing_carbon(char *barejid, char *message)
+sv_ev_outgoing_carbon(char *barejid, char *message, char *pgp_message)
 {
     ProfChatWin *chatwin = wins_get_chat(barejid);
     if (!chatwin) {
@@ -215,22 +362,20 @@ sv_ev_outgoing_carbon(char *barejid, char *message)
 
     chat_state_active(chatwin->state);
 
-    chatwin_outgoing_carbon(chatwin, message);
-}
-
-void
-sv_ev_incoming_carbon(char *barejid, char *resource, char *message)
-{
-    gboolean new_win = FALSE;
-    ProfChatWin *chatwin = wins_get_chat(barejid);
-    if (!chatwin) {
-        ProfWin *window = wins_new_chat(barejid);
-        chatwin = (ProfChatWin*)window;
-        new_win = TRUE;
+#ifdef HAVE_LIBGPGME
+    if (pgp_message) {
+        char *decrypted = p_gpg_decrypt(pgp_message);
+        if (decrypted) {
+            chatwin_outgoing_carbon(chatwin, decrypted, PROF_MSG_PGP);
+        } else {
+            chatwin_outgoing_carbon(chatwin, message, PROF_MSG_PLAIN);
+        }
+    } else {
+        chatwin_outgoing_carbon(chatwin, message, PROF_MSG_PLAIN);
     }
-
-    chatwin_incoming_msg(chatwin, resource, message, NULL, new_win, PROF_MSG_PLAIN);
-    chat_log_msg_in(barejid, message, NULL);
+#else
+    chatwin_outgoing_carbon(chatwin, message, PROF_MSG_PLAIN);
+#endif
 }
 
 #ifdef HAVE_LIBGPGME
@@ -271,7 +416,6 @@ _sv_ev_incoming_otr(ProfChatWin *chatwin, gboolean new_win, char *barejid, char 
 }
 #endif
 
-#ifndef HAVE_LIBOTR
 static void
 _sv_ev_incoming_plain(ProfChatWin *chatwin, gboolean new_win, char *barejid, char *resource, char *message, GDateTime *timestamp)
 {
@@ -279,7 +423,6 @@ _sv_ev_incoming_plain(ProfChatWin *chatwin, gboolean new_win, char *barejid, cha
     chat_log_msg_in(barejid, message, timestamp);
     chatwin->pgp_recv = FALSE;
 }
-#endif
 
 void
 sv_ev_incoming_message(char *barejid, char *resource, char *message, char *pgp_message, GDateTime *timestamp)
@@ -304,6 +447,7 @@ sv_ev_incoming_message(char *barejid, char *resource, char *message, char *pgp_m
     } else {
         _sv_ev_incoming_otr(chatwin, new_win, barejid, resource, message, timestamp);
     }
+    rosterwin_roster();
     return;
 #endif
 #endif
@@ -312,6 +456,7 @@ sv_ev_incoming_message(char *barejid, char *resource, char *message, char *pgp_m
 #ifdef HAVE_LIBOTR
 #ifndef HAVE_LIBGPGME
     _sv_ev_incoming_otr(chatwin, new_win, barejid, resource, message, timestamp);
+    rosterwin_roster();
     return;
 #endif
 #endif
@@ -324,6 +469,7 @@ sv_ev_incoming_message(char *barejid, char *resource, char *message, char *pgp_m
     } else {
         _sv_ev_incoming_plain(chatwin, new_win, barejid, resource, message, timestamp);
     }
+    rosterwin_roster();
     return;
 #endif
 #endif
@@ -332,13 +478,37 @@ sv_ev_incoming_message(char *barejid, char *resource, char *message, char *pgp_m
 #ifndef HAVE_LIBOTR
 #ifndef HAVE_LIBGPGME
     _sv_ev_incoming_plain(chatwin, new_win, barejid, resource, message, timestamp);
+    rosterwin_roster();
     return;
 #endif
 #endif
 }
 
 void
-sv_ev_message_receipt(char *barejid, char *id)
+sv_ev_incoming_carbon(char *barejid, char *resource, char *message, char *pgp_message)
+{
+    gboolean new_win = FALSE;
+    ProfChatWin *chatwin = wins_get_chat(barejid);
+    if (!chatwin) {
+        ProfWin *window = wins_new_chat(barejid);
+        chatwin = (ProfChatWin*)window;
+        new_win = TRUE;
+    }
+
+#ifdef HAVE_LIBGPGME
+    if (pgp_message) {
+        _sv_ev_incoming_pgp(chatwin, new_win, barejid, resource, message, pgp_message, NULL);
+    } else {
+        _sv_ev_incoming_plain(chatwin, new_win, barejid, resource, message, NULL);
+    }
+#else
+    _sv_ev_incoming_plain(chatwin, new_win, barejid, resource, message, NULL);
+#endif
+    rosterwin_roster();
+}
+
+void
+sv_ev_message_receipt(const char *const barejid, const char *const id)
 {
     ProfChatWin *chatwin = wins_get_chat(barejid);
     if (!chatwin)
@@ -438,8 +608,17 @@ sv_ev_contact_offline(char *barejid, char *resource, char *status)
     gboolean updated = roster_contact_offline(barejid, resource, status);
 
     if (resource && updated) {
+        plugins_on_contact_offline(barejid, resource, status);
         ui_contact_offline(barejid, resource, status);
     }
+
+#ifdef HAVE_LIBOTR
+    ProfChatWin *chatwin = wins_get_chat(barejid);
+    if (chatwin && otr_is_secure(barejid)) {
+        chatwin_otr_unsecured(chatwin);
+        otr_end_session(chatwin->barejid);
+    }
+#endif
 
     rosterwin_roster();
     chat_session_remove(barejid);
@@ -451,6 +630,8 @@ sv_ev_contact_online(char *barejid, Resource *resource, GDateTime *last_activity
     gboolean updated = roster_update_presence(barejid, resource, last_activity);
 
     if (updated) {
+        plugins_on_contact_presence(barejid, resource->name, string_from_resource_presence(resource->presence),
+            resource->status, resource->priority);
         ui_contact_online(barejid, resource, last_activity);
     }
 
@@ -512,7 +693,16 @@ sv_ev_room_occupant_offline(const char *const room, const char *const nick,
         mucwin_occupant_offline(mucwin, nick);
     }
     prefs_free_string(muc_status_pref);
+
+    Jid *jidp = jid_create_from_bare_and_resource(room, nick);
+    ProfPrivateWin *privwin = wins_get_private(jidp->fulljid);
+    jid_destroy(jidp);
+    if (privwin != NULL) {
+        privwin_occupant_offline(privwin);
+    }
+
     occupantswin_occupants(room);
+    rosterwin_roster();
 }
 
 void
@@ -524,7 +714,16 @@ sv_ev_room_occupent_kicked(const char *const room, const char *const nick, const
     if (mucwin) {
         mucwin_occupant_kicked(mucwin, nick, actor, reason);
     }
+
+    Jid *jidp = jid_create_from_bare_and_resource(room, nick);
+    ProfPrivateWin *privwin = wins_get_private(jidp->fulljid);
+    jid_destroy(jidp);
+    if (privwin != NULL) {
+        privwin_occupant_kicked(privwin, actor, reason);
+    }
+
     occupantswin_occupants(room);
+    rosterwin_roster();
 }
 
 void
@@ -536,7 +735,16 @@ sv_ev_room_occupent_banned(const char *const room, const char *const nick, const
     if (mucwin) {
         mucwin_occupant_banned(mucwin, nick, actor, reason);
     }
+
+    Jid *jidp = jid_create_from_bare_and_resource(room, nick);
+    ProfPrivateWin *privwin = wins_get_private(jidp->fulljid);
+    jid_destroy(jidp);
+    if (privwin != NULL) {
+        privwin_occupant_banned(privwin, actor, reason);
+    }
+
     occupantswin_occupants(room);
+    rosterwin_roster();
 }
 
 void
@@ -585,7 +793,13 @@ sv_ev_muc_self_online(const char *const room, const char *const nick, gboolean c
 
         iq_room_info_request(room, FALSE);
 
-        muc_invites_remove(room);
+        if (muc_invites_contain(room)) {
+            if (prefs_get_boolean(PREF_BOOKMARK_INVITE) && !bookmark_exists(room)) {
+                bookmark_add(room, nick, muc_invite_password(room), "on");
+            }
+            muc_invites_remove(room);
+        }
+
         muc_roster_set_complete(room);
 
         // show roster if occupants list disabled by default
@@ -617,6 +831,8 @@ sv_ev_muc_self_online(const char *const room, const char *const nick, gboolean c
                 mucwin_requires_config(mucwin);
             }
         }
+
+        rosterwin_roster();
 
     // check for change in role/affiliation
     } else {
@@ -668,8 +884,11 @@ sv_ev_muc_occupant_online(const char *const room, const char *const nick, const 
         if (mucwin) {
             mucwin_occupant_nick_change(mucwin, old_nick, nick);
         }
+        wins_private_nick_change(mucwin->roomjid, old_nick, nick);
         free(old_nick);
+
         occupantswin_occupants(room);
+        rosterwin_roster();
         return;
     }
 
@@ -681,7 +900,16 @@ sv_ev_muc_occupant_online(const char *const room, const char *const nick, const 
             mucwin_occupant_online(mucwin, nick, role, affiliation, show, status);
         }
         prefs_free_string(muc_status_pref);
+
+        Jid *jidp = jid_create_from_bare_and_resource(mucwin->roomjid, nick);
+        ProfPrivateWin *privwin = wins_get_private(jidp->fulljid);
+        jid_destroy(jidp);
+        if (privwin) {
+            privwin_occupant_online(privwin);
+        }
+
         occupantswin_occupants(room);
+        rosterwin_roster();
         return;
     }
 
@@ -714,6 +942,8 @@ sv_ev_muc_occupant_online(const char *const room, const char *const nick, const 
         }
         occupantswin_occupants(room);
     }
+
+    rosterwin_roster();
 }
 
 int

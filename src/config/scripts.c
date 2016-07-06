@@ -1,7 +1,7 @@
 /*
  * scripts.c
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -43,8 +43,9 @@
 #include "common.h"
 #include "log.h"
 #include "window_list.h"
-#include "command/command.h"
+#include "command/cmd_defs.h"
 #include "ui/ui.h"
+#include "xmpp/xmpp.h"
 
 void
 scripts_init(void)
@@ -158,7 +159,7 @@ scripts_exec(const char *const script)
     while ((read = getline(&line, &len, scriptfile)) != -1) {
         ProfWin *win = wins_get_current();
         cmd_process_input(win, line);
-        jabber_process_events(10);
+        session_process_events(10);
         ui_update();
     }
 

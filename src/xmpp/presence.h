@@ -1,7 +1,7 @@
 /*
  * presence.h
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -35,8 +35,8 @@
 #ifndef XMPP_PRESENCE_H
 #define XMPP_PRESENCE_H
 
+void presence_handlers_init(void);
 void presence_sub_requests_init(void);
-void presence_add_handlers(void);
 void presence_clear_sub_requests(void);
 
 #endif

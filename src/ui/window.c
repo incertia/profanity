@@ -1,7 +1,7 @@
 /*
  * window.c
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -180,6 +180,8 @@ win_create_muc(const char *const roomjid)
 
     new_win->roomjid = strdup(roomjid);
     new_win->unread = 0;
+    new_win->unread_mentions = FALSE;
+    new_win->unread_triggers = FALSE;
     if (prefs_get_boolean(PREF_OCCUPANTS_JID)) {
         new_win->showjid = TRUE;
     } else {
@@ -215,6 +217,8 @@ win_create_private(const char *const fulljid)
 
     new_win->fulljid = strdup(fulljid);
     new_win->unread = 0;
+    new_win->occupant_offline = FALSE;
+    new_win->room_left = FALSE;
 
     new_win->memcheck = PROFPRIVATEWIN_MEMCHECK;
 
@@ -233,6 +237,20 @@ win_create_xmlconsole(void)
     return &new_win->window;
 }
 
+ProfWin*
+win_create_plugin(const char *const tag)
+{
+    ProfPluginWin *new_win = malloc(sizeof(ProfPluginWin));
+    new_win->super.type = WIN_PLUGIN;
+    new_win->super.layout = _win_create_simple_layout();
+
+    new_win->tag = strdup(tag);
+
+    new_win->memcheck = PROFPLUGINWIN_MEMCHECK;
+
+    return &new_win->super;
+}
+
 char*
 win_get_title(ProfWin *window)
 {
@@ -245,10 +263,15 @@ win_get_title(ProfWin *window)
     if (window->type == WIN_CHAT) {
         ProfChatWin *chatwin = (ProfChatWin*) window;
         assert(chatwin->memcheck == PROFCHATWIN_MEMCHECK);
-        PContact contact = roster_get_contact(chatwin->barejid);
-        if (contact) {
-            const char *name = p_contact_name_or_jid(contact);
-            return strdup(name);
+        jabber_conn_status_t conn_status = connection_get_status();
+        if (conn_status == JABBER_CONNECTED) {
+            PContact contact = roster_get_contact(chatwin->barejid);
+            if (contact) {
+                const char *name = p_contact_name_or_jid(contact);
+                return strdup(name);
+            } else {
+                return strdup(chatwin->barejid);
+            }
         } else {
             return strdup(chatwin->barejid);
         }
@@ -278,8 +301,63 @@ win_get_title(ProfWin *window)
     if (window->type == WIN_XML) {
         return strdup(XML_WIN_TITLE);
     }
+    if (window->type == WIN_PLUGIN) {
+        ProfPluginWin *pluginwin = (ProfPluginWin*) window;
+        assert(pluginwin->memcheck == PROFPLUGINWIN_MEMCHECK);
+        return strdup(pluginwin->tag);
+    }
 
     return NULL;
+}
+
+char*
+win_get_string(ProfWin *window)
+{
+    assert(window != NULL);
+
+    switch (window->type) {
+        case WIN_CONSOLE:
+        {
+            ProfConsoleWin *conswin = (ProfConsoleWin*)window;
+            return cons_get_string(conswin);
+        }
+        case WIN_CHAT:
+        {
+            ProfChatWin *chatwin = (ProfChatWin*)window;
+            return chatwin_get_string(chatwin);
+        }
+        case WIN_MUC:
+        {
+            ProfMucWin *mucwin = (ProfMucWin*)window;
+            return mucwin_get_string(mucwin);
+        }
+        case WIN_MUC_CONFIG:
+        {
+            ProfMucConfWin *mucconfwin = (ProfMucConfWin*)window;
+            return mucconfwin_get_string(mucconfwin);
+        }
+        case WIN_PRIVATE:
+        {
+            ProfPrivateWin *privwin = (ProfPrivateWin*)window;
+            return privwin_get_string(privwin);
+        }
+        case WIN_XML:
+        {
+            ProfXMLWin *xmlwin = (ProfXMLWin*)window;
+            return xmlwin_get_string(xmlwin);
+        }
+        case WIN_PLUGIN:
+        {
+            ProfPluginWin *pluginwin = (ProfPluginWin*)window;
+            GString *gstring = g_string_new("");
+            g_string_append_printf(gstring, "Plugin: %s", pluginwin->tag);
+            char *res = gstring->str;
+            g_string_free(gstring, FALSE);
+            return res;
+        }
+        default:
+            return NULL;
+    }
 }
 
 void
@@ -341,27 +419,42 @@ win_free(ProfWin* window)
     }
     free(window->layout);
 
-    if (window->type == WIN_CHAT) {
+    switch (window->type) {
+    case WIN_CHAT:
+    {
         ProfChatWin *chatwin = (ProfChatWin*)window;
         free(chatwin->barejid);
         free(chatwin->resource_override);
         chat_state_free(chatwin->state);
+        break;
     }
-
-    if (window->type == WIN_MUC) {
+    case WIN_MUC:
+    {
         ProfMucWin *mucwin = (ProfMucWin*)window;
         free(mucwin->roomjid);
+        break;
     }
-
-    if (window->type == WIN_MUC_CONFIG) {
+    case WIN_MUC_CONFIG:
+    {
         ProfMucConfWin *mucconf = (ProfMucConfWin*)window;
         free(mucconf->roomjid);
         form_destroy(mucconf->form);
+        break;
     }
-
-    if (window->type == WIN_PRIVATE) {
+    case WIN_PRIVATE:
+    {
         ProfPrivateWin *privatewin = (ProfPrivateWin*)window;
         free(privatewin->fulljid);
+        break;
+    }
+    case WIN_PLUGIN:
+    {
+        ProfPluginWin *pluginwin = (ProfPluginWin*)window;
+        free(pluginwin->tag);
+        break;
+    }
+    default:
+        break;
     }
 
     free(window);
@@ -482,7 +575,9 @@ win_resize(ProfWin *window)
             } else if (window->type == WIN_MUC) {
                 subwin_cols = win_occpuants_cols();
             }
+            wbkgd(layout->base.win, theme_attrs(THEME_TEXT));
             wresize(layout->base.win, PAD_SIZE, cols - subwin_cols);
+            wbkgd(layout->subwin, theme_attrs(THEME_TEXT));
             wresize(layout->subwin, PAD_SIZE, subwin_cols);
             if (window->type == WIN_CONSOLE) {
                 rosterwin_roster();
@@ -492,9 +587,11 @@ win_resize(ProfWin *window)
                 occupantswin_occupants(mucwin->roomjid);
             }
         } else {
+            wbkgd(layout->base.win, theme_attrs(THEME_TEXT));
             wresize(layout->base.win, PAD_SIZE, cols);
         }
     } else {
+        wbkgd(window->layout->win, theme_attrs(THEME_TEXT));
         wresize(window->layout->win, PAD_SIZE, cols);
     }
 
@@ -958,6 +1055,27 @@ win_mark_received(ProfWin *window, const char *const id)
 }
 
 void
+win_update_entry_message(ProfWin *window, const char *const id, const char *const message)
+{
+    ProfBuffEntry *entry = buffer_yield_entry_by_id(window->layout->buffer, id);
+    if (entry) {
+        free(entry->message);
+        entry->message = strdup(message);
+        win_redraw(window);
+    }
+}
+
+void
+win_update_entry_theme(ProfWin *window, const char *const id, theme_item_t theme_item)
+{
+    ProfBuffEntry *entry = buffer_yield_entry_by_id(window->layout->buffer, id);
+    if (entry) {
+        entry->theme_item = theme_item;
+        win_redraw(window);
+    }
+}
+
+void
 win_println(ProfWin *window, int pad, const char *const message)
 {
     win_print(window, '-', pad, NULL, 0, 0, "", message);
@@ -1033,6 +1151,7 @@ _win_print(ProfWin *window, const char show_char, int pad_indent, GDateTime *tim
     if ((flags & NO_DATE) == 0) {
         if (date_fmt && strlen(date_fmt)) {
             if ((flags & NO_COLOUR_DATE) == 0) {
+                wbkgdset(window->layout->win, theme_attrs(THEME_TIME));
                 wattron(window->layout->win, theme_attrs(THEME_TIME));
             }
             wprintw(window->layout->win, "%s %c ", date_fmt, show_char);
@@ -1042,7 +1161,7 @@ _win_print(ProfWin *window, const char show_char, int pad_indent, GDateTime *tim
         }
     }
 
-    if (strlen(from) > 0) {
+    if (from && strlen(from) > 0) {
         if (flags & NO_ME) {
             colour = theme_attrs(THEME_THEM);
         }
@@ -1055,6 +1174,7 @@ _win_print(ProfWin *window, const char show_char, int pad_indent, GDateTime *tim
             colour = theme_attrs(THEME_RECEIPT_SENT);
         }
 
+        wbkgdset(window->layout->win, colour);
         wattron(window->layout->win, colour);
         if (strncmp(message, "/me ", 4) == 0) {
             wprintw(window->layout->win, "*%s ", from);
@@ -1068,8 +1188,10 @@ _win_print(ProfWin *window, const char show_char, int pad_indent, GDateTime *tim
 
     if (!me_message) {
         if (receipt && !receipt->received) {
+            wbkgdset(window->layout->win, theme_attrs(THEME_RECEIPT_SENT));
             wattron(window->layout->win, theme_attrs(THEME_RECEIPT_SENT));
         } else {
+            wbkgdset(window->layout->win, theme_attrs(theme_item));
             wattron(window->layout->win, theme_attrs(theme_item));
         }
     }
@@ -1136,7 +1258,11 @@ _win_print_wrapped(WINDOW *win, const char *const message, size_t indent, int pa
             wordi = 0;
             int wordlen = 0;
             while (*curr_ch != ' ' && *curr_ch != '\n' && *curr_ch != '\0') {
-                size_t ch_len = mbrlen(curr_ch, 4, NULL);
+                size_t ch_len = mbrlen(curr_ch, MB_CUR_MAX, NULL);
+                if ((ch_len == (size_t)-2) || (ch_len == (size_t)-1)) {
+                    curr_ch++;
+                    continue;
+                }
                 int offset = 0;
                 while (offset < ch_len) {
                     word[wordi++] = curr_ch[offset++];
@@ -1241,6 +1367,44 @@ win_has_active_subwin(ProfWin *window)
         ProfLayoutSplit *layout = (ProfLayoutSplit*)window->layout;
         return (layout->subwin != NULL);
     } else {
+        return FALSE;
+    }
+}
+
+gboolean
+win_notify_remind(ProfWin *window)
+{
+    switch (window->type) {
+    case WIN_CHAT:
+    {
+        ProfChatWin *chatwin = (ProfChatWin*) window;
+        assert(chatwin->memcheck == PROFCHATWIN_MEMCHECK);
+
+        if (prefs_get_boolean(PREF_NOTIFY_CHAT) && chatwin->unread > 0) {
+            return TRUE;
+        } else {
+            return FALSE;
+        }
+    }
+    case WIN_MUC:
+    {
+        ProfMucWin *mucwin = (ProfMucWin*) window;
+        assert(mucwin->memcheck == PROFMUCWIN_MEMCHECK);
+
+        return prefs_do_room_notify_mention(mucwin->roomjid, mucwin->unread, mucwin->unread_mentions, mucwin->unread_triggers);
+    }
+    case WIN_PRIVATE:
+    {
+        ProfPrivateWin *privatewin = (ProfPrivateWin*) window;
+        assert(privatewin->memcheck == PROFPRIVATEWIN_MEMCHECK);
+
+        if (prefs_get_boolean(PREF_NOTIFY_CHAT) && privatewin->unread > 0) {
+            return TRUE;
+        } else {
+            return FALSE;
+        }
+    }
+    default:
         return FALSE;
     }
 }

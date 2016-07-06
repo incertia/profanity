@@ -1,7 +1,7 @@
 /*
  * client_events.h
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -38,10 +38,12 @@
 jabber_conn_status_t cl_ev_connect_jid(const char *const jid, const char *const passwd, const char *const altdomain, const int port, const char *const tls_policy);
 jabber_conn_status_t cl_ev_connect_account(ProfAccount *account);
 
+void cl_ev_disconnect(void);
+
 void cl_ev_presence_send(const resource_presence_t presence_type, const char *const msg, const int idle_secs);
 
-void cl_ev_send_msg(ProfChatWin *chatwin, const char *const msg);
-void cl_ev_send_muc_msg(ProfMucWin *mucwin, const char *const msg);
-void cl_ev_send_priv_msg(ProfPrivateWin *privwin, const char *const msg);
+void cl_ev_send_msg(ProfChatWin *chatwin, const char *const msg, const char *const oob_url);
+void cl_ev_send_muc_msg(ProfMucWin *mucwin, const char *const msg, const char *const oob_url);
+void cl_ev_send_priv_msg(ProfPrivateWin *privwin, const char *const msg, const char *const oob_url);
 
 #endif

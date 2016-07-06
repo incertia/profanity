@@ -1,7 +1,7 @@
 /*
  * message.h
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -35,6 +35,6 @@
 #ifndef XMPP_MESSAGE_H
 #define XMPP_MESSAGE_H
 
-void message_add_handlers(void);
+void message_handlers_init(void);
 
 #endif

@@ -1,7 +1,7 @@
 /*
  * xmlwin.c
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -33,6 +33,7 @@
  */
 
 #include <assert.h>
+#include <string.h>
 
 #include "ui/win_types.h"
 #include "window_list.h"
@@ -52,4 +53,12 @@ xmlwin_show(ProfXMLWin *xmlwin, const char *const msg)
         win_print(window, '-', 0, NULL, 0, THEME_AWAY, "", &msg[6]);
         win_print(window, '-', 0, NULL, 0, THEME_AWAY, "", "");
     }
+}
+
+char*
+xmlwin_get_string(ProfXMLWin *xmlwin)
+{
+    assert(xmlwin != NULL);
+
+    return strdup("XML console");
 }

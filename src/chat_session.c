@@ -1,7 +1,7 @@
 /*
  * chat_session.c
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -74,8 +74,11 @@ _chat_session_free(ChatSession *session)
 void
 chat_sessions_init(void)
 {
-    sessions = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
-        (GDestroyNotify)_chat_session_free);
+    if (sessions) {
+        g_hash_table_destroy(sessions);
+    }
+
+    sessions = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)_chat_session_free);
 }
 
 void

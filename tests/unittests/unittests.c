@@ -9,7 +9,6 @@
 
 #include "config.h"
 #include "chat_session.h"
-
 #include "helpers.h"
 #include "test_autocomplete.h"
 #include "test_chat_session.h"
@@ -19,7 +18,7 @@
 #include "test_cmd_account.h"
 #include "test_cmd_rooms.h"
 #include "test_cmd_sub.h"
-#include "test_cmd_statuses.h"
+#include "test_cmd_presence.h"
 #include "test_cmd_otr.h"
 #include "test_cmd_pgp.h"
 #include "test_jid.h"
@@ -95,14 +94,6 @@ int main(int argc, char* argv[]) {
         unit_test(strip_quotes_strips_first),
         unit_test(strip_quotes_strips_last),
         unit_test(strip_quotes_strips_both),
-        unit_test(str_not_contains_str),
-        unit_test(str_contains_str_at_start),
-        unit_test(str_contains_str_at_end),
-        unit_test(str_contains_str_in_middle),
-        unit_test(str_contains_str_whole),
-        unit_test(str_empty_not_contains_str),
-        unit_test(str_not_contains_str_empty),
-        unit_test(str_empty_not_contains_str_empty),
 
         unit_test(clear_empty),
         unit_test(reset_after_create),
@@ -247,9 +238,6 @@ int main(int argc, char* argv[]) {
         unit_test_setup_teardown(cmd_connect_shows_message_when_connected,
             load_preferences,
             close_preferences),
-        unit_test_setup_teardown(cmd_connect_shows_message_when_undefined,
-            load_preferences,
-            close_preferences),
         unit_test_setup_teardown(cmd_connect_when_no_account,
             load_preferences,
             close_preferences),
@@ -317,8 +305,6 @@ int main(int argc, char* argv[]) {
         unit_test(cmd_rooms_shows_message_when_disconnected),
         unit_test(cmd_rooms_shows_message_when_disconnecting),
         unit_test(cmd_rooms_shows_message_when_connecting),
-        unit_test(cmd_rooms_shows_message_when_started),
-        unit_test(cmd_rooms_shows_message_when_undefined),
         unit_test(cmd_rooms_uses_account_default_when_no_arg),
         unit_test(cmd_rooms_arg_used_when_passed),
 
@@ -409,35 +395,35 @@ int main(int argc, char* argv[]) {
         unit_test(contact_available_when_highest_priority_online),
         unit_test(contact_available_when_highest_priority_chat),
 
-        unit_test(cmd_statuses_shows_usage_when_bad_subcmd),
-        unit_test(cmd_statuses_shows_usage_when_bad_console_setting),
-        unit_test(cmd_statuses_shows_usage_when_bad_chat_setting),
-        unit_test(cmd_statuses_shows_usage_when_bad_muc_setting),
-        unit_test_setup_teardown(cmd_statuses_console_sets_all,
+        unit_test(cmd_presence_shows_usage_when_bad_subcmd),
+        unit_test(cmd_presence_shows_usage_when_bad_console_setting),
+        unit_test(cmd_presence_shows_usage_when_bad_chat_setting),
+        unit_test(cmd_presence_shows_usage_when_bad_muc_setting),
+        unit_test_setup_teardown(cmd_presence_console_sets_all,
             load_preferences,
             close_preferences),
-        unit_test_setup_teardown(cmd_statuses_console_sets_online,
+        unit_test_setup_teardown(cmd_presence_console_sets_online,
             load_preferences,
             close_preferences),
-        unit_test_setup_teardown(cmd_statuses_console_sets_none,
+        unit_test_setup_teardown(cmd_presence_console_sets_none,
             load_preferences,
             close_preferences),
-        unit_test_setup_teardown(cmd_statuses_chat_sets_all,
+        unit_test_setup_teardown(cmd_presence_chat_sets_all,
             load_preferences,
             close_preferences),
-        unit_test_setup_teardown(cmd_statuses_chat_sets_online,
+        unit_test_setup_teardown(cmd_presence_chat_sets_online,
             load_preferences,
             close_preferences),
-        unit_test_setup_teardown(cmd_statuses_chat_sets_none,
+        unit_test_setup_teardown(cmd_presence_chat_sets_none,
             load_preferences,
             close_preferences),
-        unit_test_setup_teardown(cmd_statuses_muc_sets_all,
+        unit_test_setup_teardown(cmd_presence_room_sets_all,
             load_preferences,
             close_preferences),
-        unit_test_setup_teardown(cmd_statuses_muc_sets_online,
+        unit_test_setup_teardown(cmd_presence_room_sets_online,
             load_preferences,
             close_preferences),
-        unit_test_setup_teardown(cmd_statuses_muc_sets_none,
+        unit_test_setup_teardown(cmd_presence_room_sets_none,
             load_preferences,
             close_preferences),
 
@@ -493,8 +479,6 @@ int main(int argc, char* argv[]) {
         unit_test(cmd_bookmark_shows_message_when_disconnected),
         unit_test(cmd_bookmark_shows_message_when_disconnecting),
         unit_test(cmd_bookmark_shows_message_when_connecting),
-        unit_test(cmd_bookmark_shows_message_when_started),
-        unit_test(cmd_bookmark_shows_message_when_undefined),
         unit_test(cmd_bookmark_shows_usage_when_no_args),
         unit_test(cmd_bookmark_list_shows_bookmarks),
         unit_test(cmd_bookmark_add_shows_message_when_invalid_jid),
@@ -506,8 +490,6 @@ int main(int argc, char* argv[]) {
         unit_test(cmd_bookmark_remove_shows_message_when_no_bookmark),
 
 #ifdef HAVE_LIBOTR
-        unit_test(cmd_otr_shows_usage_when_no_args),
-        unit_test(cmd_otr_shows_usage_when_invalid_subcommand),
         unit_test(cmd_otr_log_shows_usage_when_no_args),
         unit_test(cmd_otr_log_shows_usage_when_invalid_subcommand),
         unit_test_setup_teardown(cmd_otr_log_on_enables_logging,
@@ -529,13 +511,9 @@ int main(int argc, char* argv[]) {
         unit_test(cmd_otr_gen_shows_message_when_not_connected),
         unit_test(cmd_otr_gen_generates_key_for_connected_account),
         unit_test(cmd_otr_gen_shows_message_when_disconnected),
-        unit_test(cmd_otr_gen_shows_message_when_undefined),
-        unit_test(cmd_otr_gen_shows_message_when_started),
         unit_test(cmd_otr_gen_shows_message_when_connecting),
         unit_test(cmd_otr_gen_shows_message_when_disconnecting),
         unit_test(cmd_otr_myfp_shows_message_when_disconnected),
-        unit_test(cmd_otr_myfp_shows_message_when_undefined),
-        unit_test(cmd_otr_myfp_shows_message_when_started),
         unit_test(cmd_otr_myfp_shows_message_when_connecting),
         unit_test(cmd_otr_myfp_shows_message_when_disconnecting),
         unit_test(cmd_otr_myfp_shows_message_when_no_key),
@@ -562,8 +540,6 @@ int main(int argc, char* argv[]) {
         unit_test(cmd_pgp_start_shows_message_when_disconnected),
         unit_test(cmd_pgp_start_shows_message_when_disconnecting),
         unit_test(cmd_pgp_start_shows_message_when_connecting),
-        unit_test(cmd_pgp_start_shows_message_when_undefined),
-        unit_test(cmd_pgp_start_shows_message_when_started),
         unit_test(cmd_pgp_start_shows_message_when_no_arg_in_console),
         unit_test(cmd_pgp_start_shows_message_when_no_arg_in_muc),
         unit_test(cmd_pgp_start_shows_message_when_no_arg_in_mucconf),
@@ -576,7 +552,6 @@ int main(int argc, char* argv[]) {
         unit_test(cmd_join_shows_message_when_disconnecting),
         unit_test(cmd_join_shows_message_when_connecting),
         unit_test(cmd_join_shows_message_when_disconnected),
-        unit_test(cmd_join_shows_message_when_undefined),
         unit_test(cmd_join_shows_error_message_when_invalid_room_jid),
         unit_test(cmd_join_uses_account_mucservice_when_no_service_specified),
         unit_test(cmd_join_uses_supplied_nick),
@@ -586,7 +561,6 @@ int main(int argc, char* argv[]) {
         unit_test(cmd_roster_shows_message_when_disconnecting),
         unit_test(cmd_roster_shows_message_when_connecting),
         unit_test(cmd_roster_shows_message_when_disconnected),
-        unit_test(cmd_roster_shows_message_when_undefined),
         unit_test(cmd_roster_shows_roster_when_no_args),
         unit_test(cmd_roster_add_shows_message_when_no_jid),
         unit_test(cmd_roster_add_sends_roster_add_request),
@@ -622,7 +596,12 @@ int main(int argc, char* argv[]) {
         unit_test(remove_text_multi_value_removes_when_one),
         unit_test(remove_text_multi_value_removes_when_many),
 
-        unit_test(clears_chat_sessions),
+        unit_test_setup_teardown(clears_chat_sessions,
+            load_preferences,
+            close_preferences),
+
+        unit_test(prof_partial_occurrences_tests),
+        unit_test(prof_whole_occurrences_tests),
     };
 
     return run_tests(all_tests);

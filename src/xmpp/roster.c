@@ -1,7 +1,7 @@
 /*
  * roster.c
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -48,19 +48,21 @@
 #endif
 
 #include "log.h"
+#include "plugins/plugins.h"
 #include "profanity.h"
 #include "ui/ui.h"
 #include "event/server_events.h"
 #include "event/client_events.h"
 #include "tools/autocomplete.h"
 #include "config/preferences.h"
+#include "xmpp/session.h"
+#include "xmpp/iq.h"
 #include "xmpp/connection.h"
 #include "xmpp/roster.h"
 #include "roster_list.h"
 #include "xmpp/stanza.h"
 #include "xmpp/xmpp.h"
-
-#define HANDLE(type, func) xmpp_handler_add(conn, func, XMPP_NS_ROSTER, STANZA_NAME_IQ, type, ctx)
+#include "plugins/plugins.h"
 
 // callback data for group commands
 typedef struct _group_data {
@@ -68,68 +70,51 @@ typedef struct _group_data {
     char *group;
 } GroupData;
 
-// event handlers
-static int _roster_set_handler(xmpp_conn_t *const conn, xmpp_stanza_t *const stanza, void *const userdata);
-static int _roster_result_handler(xmpp_conn_t *const conn, xmpp_stanza_t *const stanza, void *const userdata);
-
 // id handlers
-static int _group_add_handler(xmpp_conn_t *const conn, xmpp_stanza_t *const stanza, void *const userdata);
-static int _group_remove_handler(xmpp_conn_t *const conn, xmpp_stanza_t *const stanza, void *const userdata);
+static int _group_add_id_handler(xmpp_stanza_t *const stanza, void *const userdata);
+static int _group_remove_id_handler(xmpp_stanza_t *const stanza, void *const userdata);
+static void _free_group_data(GroupData *data);
 
 // helper functions
 GSList* _get_groups_from_item(xmpp_stanza_t *item);
 
 void
-roster_add_handlers(void)
-{
-    xmpp_conn_t * const conn = connection_get_conn();
-    xmpp_ctx_t * const ctx = connection_get_ctx();
-
-    HANDLE(STANZA_TYPE_SET,    _roster_set_handler);
-    HANDLE(STANZA_TYPE_RESULT, _roster_result_handler);
-}
-
-void
 roster_request(void)
 {
-    xmpp_conn_t * const conn = connection_get_conn();
     xmpp_ctx_t * const ctx = connection_get_ctx();
     xmpp_stanza_t *iq = stanza_create_roster_iq(ctx);
-    xmpp_send(conn, iq);
+    iq_send_stanza(iq);
     xmpp_stanza_release(iq);
 }
 
 void
 roster_send_add_new(const char *const barejid, const char *const name)
 {
-    xmpp_conn_t * const conn = connection_get_conn();
     xmpp_ctx_t * const ctx = connection_get_ctx();
     char *id = create_unique_id("roster");
     xmpp_stanza_t *iq = stanza_create_roster_set(ctx, id, barejid, name, NULL);
     free(id);
-    xmpp_send(conn, iq);
+    iq_send_stanza(iq);
     xmpp_stanza_release(iq);
 }
 
 void
 roster_send_remove(const char *const barejid)
 {
-    xmpp_conn_t * const conn = connection_get_conn();
     xmpp_ctx_t * const ctx = connection_get_ctx();
     xmpp_stanza_t *iq = stanza_create_roster_remove_set(ctx, barejid);
-    xmpp_send(conn, iq);
+    iq_send_stanza(iq);
     xmpp_stanza_release(iq);
 }
 
 void
 roster_send_name_change(const char *const barejid, const char *const new_name, GSList *groups)
 {
-    xmpp_conn_t * const conn = connection_get_conn();
     xmpp_ctx_t * const ctx = connection_get_ctx();
     char *id = create_unique_id("roster");
     xmpp_stanza_t *iq = stanza_create_roster_set(ctx, id, barejid, new_name, groups);
     free(id);
-    xmpp_send(conn, iq);
+    iq_send_stanza(iq);
     xmpp_stanza_release(iq);
 }
 
@@ -154,26 +139,22 @@ roster_send_add_to_group(const char *const group, PContact contact)
         data->name = strdup(p_contact_barejid(contact));
     }
 
-    xmpp_conn_t * const conn = connection_get_conn();
     xmpp_ctx_t * const ctx = connection_get_ctx();
-    xmpp_id_handler_add(conn, _group_add_handler, unique_id, data);
+    iq_id_handler_add(unique_id, _group_add_id_handler, (ProfIdFreeCallback)_free_group_data, data);
     xmpp_stanza_t *iq = stanza_create_roster_set(ctx, unique_id, p_contact_barejid(contact),
         p_contact_name(contact), new_groups);
-    xmpp_send(conn, iq);
+    iq_send_stanza(iq);
     xmpp_stanza_release(iq);
     free(unique_id);
 }
 
 static int
-_group_add_handler(xmpp_conn_t *const conn, xmpp_stanza_t *const stanza,
-    void *const userdata)
+_group_add_id_handler(xmpp_stanza_t *const stanza, void *const userdata)
 {
     if (userdata) {
         GroupData *data = userdata;
         ui_group_added(data->name, data->group);
-        free(data->name);
-        free(data->group);
-        free(userdata);
+        _free_group_data(data);
     }
     return 0;
 }
@@ -190,7 +171,6 @@ roster_send_remove_from_group(const char *const group, PContact contact)
         groups = g_slist_next(groups);
     }
 
-    xmpp_conn_t * const conn = connection_get_conn();
     xmpp_ctx_t * const ctx = connection_get_ctx();
 
     // add an id handler to handle the response
@@ -203,17 +183,16 @@ roster_send_remove_from_group(const char *const group, PContact contact)
         data->name = strdup(p_contact_barejid(contact));
     }
 
-    xmpp_id_handler_add(conn, _group_remove_handler, unique_id, data);
+    iq_id_handler_add(unique_id, _group_remove_id_handler, (ProfIdFreeCallback)_free_group_data, data);
     xmpp_stanza_t *iq = stanza_create_roster_set(ctx, unique_id, p_contact_barejid(contact),
         p_contact_name(contact), new_groups);
-    xmpp_send(conn, iq);
+    iq_send_stanza(iq);
     xmpp_stanza_release(iq);
     free(unique_id);
 }
 
 static int
-_group_remove_handler(xmpp_conn_t *const conn, xmpp_stanza_t *const stanza,
-    void *const userdata)
+_group_remove_id_handler(xmpp_stanza_t *const stanza, void *const userdata)
 {
     if (userdata) {
         GroupData *data = userdata;
@@ -225,9 +204,8 @@ _group_remove_handler(xmpp_conn_t *const conn, xmpp_stanza_t *const stanza,
     return 0;
 }
 
-static int
-_roster_set_handler(xmpp_conn_t *const conn, xmpp_stanza_t *const stanza,
-    void *const userdata)
+void
+roster_set_handler(xmpp_stanza_t *const stanza)
 {
     xmpp_stanza_t *query =
         xmpp_stanza_get_child_by_name(stanza, STANZA_NAME_QUERY);
@@ -235,15 +213,15 @@ _roster_set_handler(xmpp_conn_t *const conn, xmpp_stanza_t *const stanza,
         xmpp_stanza_get_child_by_name(query, STANZA_NAME_ITEM);
 
     if (item == NULL) {
-        return 1;
+        return;
     }
 
     // if from attribute exists and it is not current users barejid, ignore push
-    Jid *my_jid = jid_create(jabber_get_fulljid());
+    Jid *my_jid = jid_create(connection_get_fulljid());
     const char *from = xmpp_stanza_get_attribute(stanza, STANZA_ATTR_FROM);
     if (from && (strcmp(from, my_jid->barejid) != 0)) {
         jid_destroy(my_jid);
-        return 1;
+        return;
     }
     jid_destroy(my_jid);
 
@@ -292,16 +270,16 @@ _roster_set_handler(xmpp_conn_t *const conn, xmpp_stanza_t *const stanza,
 
     g_free(barejid_lower);
 
-    return 1;
+    return;
 }
 
-static int
-_roster_result_handler(xmpp_conn_t *const conn, xmpp_stanza_t *const stanza, void *const userdata)
+void
+roster_result_handler(xmpp_stanza_t *const stanza)
 {
     const char *id = xmpp_stanza_get_attribute(stanza, STANZA_ATTR_ID);
 
     if (g_strcmp0(id, "roster") != 0) {
-        return 1;
+        return;
     }
 
     // handle initial roster response
@@ -336,36 +314,7 @@ _roster_result_handler(xmpp_conn_t *const conn, xmpp_stanza_t *const stanza, voi
 
     sv_ev_roster_received();
 
-    char *account = jabber_get_account_name();
-    resource_presence_t conn_presence = accounts_get_login_presence(account);
-
-    char *last_activity_str = accounts_get_last_activity(account);
-    if (last_activity_str) {
-        GDateTime *nowdt = g_date_time_new_now_utc();
-
-        GTimeVal lasttv;
-        gboolean res = g_time_val_from_iso8601(last_activity_str, &lasttv);
-        if (res) {
-            GDateTime *lastdt = g_date_time_new_from_timeval_utc(&lasttv);
-            GTimeSpan diff_micros = g_date_time_difference(nowdt, lastdt);
-            int diff_secs = (diff_micros / 1000) / 1000;
-            if (prefs_get_boolean(PREF_LASTACTIVITY)) {
-                cl_ev_presence_send(conn_presence, NULL, diff_secs);
-            } else {
-                cl_ev_presence_send(conn_presence, NULL, 0);
-            }
-            g_date_time_unref(lastdt);
-        } else {
-            cl_ev_presence_send(conn_presence, NULL, 0);
-        }
-
-        free(last_activity_str);
-        g_date_time_unref(nowdt);
-    } else {
-        cl_ev_presence_send(conn_presence, NULL, 0);
-    }
-
-    return 1;
+    return;
 }
 
 GSList*
@@ -385,4 +334,14 @@ _get_groups_from_item(xmpp_stanza_t *item)
     }
 
     return groups;
+}
+
+static void
+_free_group_data(GroupData *data)
+{
+    if (data) {
+        free(data->group);
+        free(data->name);
+        free(data);
+    }
 }

@@ -1,7 +1,7 @@
 /*
  * tinyurl.c
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -34,6 +34,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 
 #include <curl/curl.h>
 #include <curl/easy.h>

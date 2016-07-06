@@ -1,7 +1,7 @@
 /*
  * otr.c
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -45,6 +45,7 @@
 #include "window_list.h"
 #include "contact.h"
 #include "ui/ui.h"
+#include "xmpp/xmpp.h"
 #include "config/preferences.h"
 #include "chat_session.h"
 
@@ -84,9 +85,13 @@ cb_policy(void *opdata, ConnContext *context)
 }
 
 static int
-cb_is_logged_in(void *opdata, const char *accountname,
-    const char *protocol, const char *recipient)
+cb_is_logged_in(void *opdata, const char *accountname, const char *protocol, const char *recipient)
 {
+    jabber_conn_status_t conn_status = connection_get_status();
+    if (conn_status != JABBER_CONNECTED) {
+        return PRESENCE_OFFLINE;
+    }
+
     PContact contact = roster_get_contact(recipient);
 
     // not in roster
@@ -133,7 +138,7 @@ cb_write_fingerprints(void *opdata)
     GString *fpsfilename = g_string_new(basedir->str);
     g_string_append(fpsfilename, "fingerprints.txt");
     err = otrl_privkey_write_fingerprints(user_state, fpsfilename->str);
-    if (!err == GPG_ERR_NO_ERROR) {
+    if (err != GPG_ERR_NO_ERROR) {
         log_error("Failed to write fingerprints file");
         cons_show_error("Failed to create fingerprints file");
     }
@@ -226,6 +231,9 @@ otr_on_connect(ProfAccount *account)
         return;
     }
 
+    if (user_state) {
+        otrl_userstate_free(user_state);
+    }
     user_state = otrl_userstate_create();
 
     gcry_error_t err = 0;
@@ -238,7 +246,7 @@ otr_on_connect(ProfAccount *account)
     } else {
         log_info("Loading OTR private key %s", keysfilename->str);
         err = otrl_privkey_read(user_state, keysfilename->str);
-        if (!err == GPG_ERR_NO_ERROR) {
+        if (err != GPG_ERR_NO_ERROR) {
             log_warning("Failed to read OTR private key file: %s", keysfilename->str);
             cons_show_error("Failed to read OTR private key file: %s", keysfilename->str);
             g_string_free(basedir, TRUE);
@@ -266,7 +274,7 @@ otr_on_connect(ProfAccount *account)
     } else {
         log_info("Loading OTR fingerprints %s", fpsfilename->str);
         err = otrl_privkey_read_fingerprints(user_state, fpsfilename->str, NULL, NULL);
-        if (!err == GPG_ERR_NO_ERROR) {
+        if (err != GPG_ERR_NO_ERROR) {
             log_error("Failed to load OTR fingerprints file: %s", fpsfilename->str);
             g_string_free(basedir, TRUE);
             g_string_free(keysfilename, TRUE);
@@ -410,7 +418,7 @@ otr_keygen(ProfAccount *account)
     cons_show("Moving the mouse randomly around the screen may speed up the process!");
     ui_update();
     err = otrl_privkey_generate(user_state, keysfilename->str, account->jid, "xmpp");
-    if (!err == GPG_ERR_NO_ERROR) {
+    if (err != GPG_ERR_NO_ERROR) {
         g_string_free(basedir, TRUE);
         g_string_free(keysfilename, TRUE);
         log_error("Failed to generate private key");
@@ -425,7 +433,7 @@ otr_keygen(ProfAccount *account)
     g_string_append(fpsfilename, "fingerprints.txt");
     log_debug("Generating fingerprints file %s for %s", fpsfilename->str, jid);
     err = otrl_privkey_write_fingerprints(user_state, fpsfilename->str);
-    if (!err == GPG_ERR_NO_ERROR) {
+    if (err != GPG_ERR_NO_ERROR) {
         g_string_free(basedir, TRUE);
         g_string_free(keysfilename, TRUE);
         log_error("Failed to create fingerprints file");
@@ -435,7 +443,7 @@ otr_keygen(ProfAccount *account)
     log_info("Fingerprints file created");
 
     err = otrl_privkey_read(user_state, keysfilename->str);
-    if (!err == GPG_ERR_NO_ERROR) {
+    if (err != GPG_ERR_NO_ERROR) {
         g_string_free(basedir, TRUE);
         g_string_free(keysfilename, TRUE);
         log_error("Failed to load private key");
@@ -444,7 +452,7 @@ otr_keygen(ProfAccount *account)
     }
 
     err = otrl_privkey_read_fingerprints(user_state, fpsfilename->str, NULL, NULL);
-    if (!err == GPG_ERR_NO_ERROR) {
+    if (err != GPG_ERR_NO_ERROR) {
         g_string_free(basedir, TRUE);
         g_string_free(keysfilename, TRUE);
         log_error("Failed to load fingerprints");
@@ -668,7 +676,7 @@ otr_get_their_fingerprint(const char *const recipient)
 prof_otrpolicy_t
 otr_get_policy(const char *const recipient)
 {
-    char *account_name = jabber_get_account_name();
+    char *account_name = session_get_account_name();
     ProfAccount *account = accounts_get_account(account_name);
     // check contact specific setting
     if (g_list_find_custom(account->otr_manual, recipient, (GCompareFunc)g_strcmp0)) {

@@ -1,7 +1,7 @@
 /*
  * preferences.c
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -45,6 +45,7 @@
 #include "log.h"
 #include "preferences.h"
 #include "tools/autocomplete.h"
+#include "config/conflists.h"
 
 // preference groups refer to the sections in .profrc, for example [ui]
 #define PREF_GROUP_LOGGING "logging"
@@ -56,6 +57,7 @@
 #define PREF_GROUP_ALIAS "alias"
 #define PREF_GROUP_OTR "otr"
 #define PREF_GROUP_PGP "pgp"
+#define PREF_GROUP_MUC "muc"
 
 #define INPBLOCK_DEFAULT 1000
 
@@ -64,6 +66,7 @@ static GKeyFile *prefs;
 gint log_maxsize = 0;
 
 static Autocomplete boolean_choice_ac;
+static Autocomplete room_trigger_ac;
 
 static void _save_prefs(void);
 static gchar* _get_preferences_file(void);
@@ -83,8 +86,7 @@ prefs_load(void)
     }
 
     prefs = g_key_file_new();
-    g_key_file_load_from_file(prefs, prefs_loc, G_KEY_FILE_KEEP_COMMENTS,
-        NULL);
+    g_key_file_load_from_file(prefs, prefs_loc, G_KEY_FILE_KEEP_COMMENTS, NULL);
 
     err = NULL;
     log_maxsize = g_key_file_get_integer(prefs, PREF_GROUP_LOGGING, "maxsize", &err);
@@ -93,14 +95,14 @@ prefs_load(void)
         g_error_free(err);
     }
 
-    // move pre 0.4.8 autoaway.time to autoaway.awaytime
+    // move pre 0.5.0 autoaway.time to autoaway.awaytime
     if (g_key_file_has_key(prefs, PREF_GROUP_PRESENCE, "autoaway.time", NULL)) {
         gint time = g_key_file_get_integer(prefs, PREF_GROUP_PRESENCE, "autoaway.time", NULL);
         g_key_file_set_integer(prefs, PREF_GROUP_PRESENCE, "autoaway.awaytime", time);
         g_key_file_remove_key(prefs, PREF_GROUP_PRESENCE, "autoaway.time", NULL);
     }
 
-    // move pre 0.4.8 autoaway.message to autoaway.awaymessage
+    // move pre 0.5.0 autoaway.message to autoaway.awaymessage
     if (g_key_file_has_key(prefs, PREF_GROUP_PRESENCE, "autoaway.message", NULL)) {
         char *message = g_key_file_get_string(prefs, PREF_GROUP_PRESENCE, "autoaway.message", NULL);
         g_key_file_set_string(prefs, PREF_GROUP_PRESENCE, "autoaway.awaymessage", message);
@@ -108,7 +110,7 @@ prefs_load(void)
         prefs_free_string(message);
     }
 
-    // migrate pre 0.4.8 time settings
+    // migrate pre 0.5.0 time settings
     if (g_key_file_has_key(prefs, PREF_GROUP_UI, "time", NULL)) {
         char *time = g_key_file_get_string(prefs, PREF_GROUP_UI, "time", NULL);
         char *val = NULL;
@@ -127,17 +129,42 @@ prefs_load(void)
         prefs_free_string(time);
     }
 
+    // move pre 0.5.0 notify settings
+    if (g_key_file_has_key(prefs, PREF_GROUP_NOTIFICATIONS, "room", NULL)) {
+        char *value = g_key_file_get_string(prefs, PREF_GROUP_NOTIFICATIONS, "room", NULL);
+        if (g_strcmp0(value, "on") == 0) {
+            g_key_file_set_boolean(prefs, PREF_GROUP_NOTIFICATIONS, "room", TRUE);
+        } else if (g_strcmp0(value, "off") == 0) {
+            g_key_file_set_boolean(prefs, PREF_GROUP_NOTIFICATIONS, "room", FALSE);
+        } else if (g_strcmp0(value, "mention") == 0) {
+            g_key_file_set_boolean(prefs, PREF_GROUP_NOTIFICATIONS, "room", FALSE);
+            g_key_file_set_boolean(prefs, PREF_GROUP_NOTIFICATIONS, "room.mention", TRUE);
+        }
+        prefs_free_string(value);
+    }
+
     _save_prefs();
 
     boolean_choice_ac = autocomplete_new();
     autocomplete_add(boolean_choice_ac, "on");
     autocomplete_add(boolean_choice_ac, "off");
+
+    room_trigger_ac = autocomplete_new();
+    gsize len = 0;
+    gchar **triggers = g_key_file_get_string_list(prefs, PREF_GROUP_NOTIFICATIONS, "room.trigger.list", &len, NULL);
+
+    int i = 0;
+    for (i = 0; i < len; i++) {
+        autocomplete_add(room_trigger_ac, triggers[i]);
+    }
+    g_strfreev(triggers);
 }
 
 void
 prefs_close(void)
 {
     autocomplete_free(boolean_choice_ac);
+    autocomplete_free(room_trigger_ac);
     g_key_file_free(prefs);
     prefs = NULL;
 }
@@ -152,6 +179,209 @@ void
 prefs_reset_boolean_choice(void)
 {
     autocomplete_reset(boolean_choice_ac);
+}
+
+char*
+prefs_autocomplete_room_trigger(const char *const prefix)
+{
+    return autocomplete_complete(room_trigger_ac, prefix, TRUE);
+}
+
+void
+prefs_reset_room_trigger_ac(void)
+{
+    autocomplete_reset(room_trigger_ac);
+}
+
+gboolean
+prefs_do_chat_notify(gboolean current_win)
+{
+    if (prefs_get_boolean(PREF_NOTIFY_CHAT) == FALSE) {
+        return FALSE;
+    } else {
+        if ((current_win == FALSE) || ((current_win == TRUE) && prefs_get_boolean(PREF_NOTIFY_CHAT_CURRENT))) {
+            return TRUE;
+        } else {
+            return FALSE;
+        }
+    }
+}
+
+GList*
+prefs_message_get_triggers(const char *const message)
+{
+    GList *result = NULL;
+
+    char *message_lower = g_utf8_strdown(message, -1);
+    gsize len = 0;
+    gchar **triggers = g_key_file_get_string_list(prefs, PREF_GROUP_NOTIFICATIONS, "room.trigger.list", &len, NULL);
+    int i;
+    for (i = 0; i < len; i++) {
+        char *trigger_lower = g_utf8_strdown(triggers[i], -1);
+        if (g_strrstr(message_lower, trigger_lower)) {
+            result = g_list_append(result, strdup(triggers[i]));
+        }
+        g_free(trigger_lower);
+    }
+    g_strfreev(triggers);
+    g_free(message_lower);
+
+    return result;
+}
+
+gboolean
+prefs_do_room_notify(gboolean current_win, const char *const roomjid, const char *const mynick,
+    const char *const theirnick, const char *const message, gboolean mention, gboolean trigger_found)
+{
+    if (g_strcmp0(mynick, theirnick) == 0) {
+        return FALSE;
+    }
+
+    gboolean notify_current = prefs_get_boolean(PREF_NOTIFY_ROOM_CURRENT);
+    gboolean notify_window = FALSE;
+    if (!current_win || (current_win && notify_current) ) {
+        notify_window = TRUE;
+    }
+    if (!notify_window) {
+        return FALSE;
+    }
+
+    gboolean notify_room = FALSE;
+    if (g_key_file_has_key(prefs, roomjid, "notify", NULL)) {
+        notify_room = g_key_file_get_boolean(prefs, roomjid, "notify", NULL);
+    } else {
+        notify_room = prefs_get_boolean(PREF_NOTIFY_ROOM);
+    }
+    if (notify_room) {
+        return TRUE;
+    }
+
+    gboolean notify_mention = FALSE;
+    if (g_key_file_has_key(prefs, roomjid, "notify.mention", NULL)) {
+        notify_mention = g_key_file_get_boolean(prefs, roomjid, "notify.mention", NULL);
+    } else {
+        notify_mention = prefs_get_boolean(PREF_NOTIFY_ROOM_MENTION);
+    }
+    if (notify_mention && mention) {
+        return TRUE;
+    }
+
+    gboolean notify_trigger = FALSE;
+    if (g_key_file_has_key(prefs, roomjid, "notify.trigger", NULL)) {
+        notify_trigger = g_key_file_get_boolean(prefs, roomjid, "notify.trigger", NULL);
+    } else {
+        notify_trigger = prefs_get_boolean(PREF_NOTIFY_ROOM_TRIGGER);
+    }
+    if (notify_trigger && trigger_found) {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+gboolean
+prefs_do_room_notify_mention(const char *const roomjid, int unread, gboolean mention, gboolean trigger)
+{
+    gboolean notify_room = FALSE;
+    if (g_key_file_has_key(prefs, roomjid, "notify", NULL)) {
+        notify_room = g_key_file_get_boolean(prefs, roomjid, "notify", NULL);
+    } else {
+        notify_room = prefs_get_boolean(PREF_NOTIFY_ROOM);
+    }
+    if (notify_room && unread > 0) {
+        return TRUE;
+    }
+
+    gboolean notify_mention = FALSE;
+    if (g_key_file_has_key(prefs, roomjid, "notify.mention", NULL)) {
+        notify_mention = g_key_file_get_boolean(prefs, roomjid, "notify.mention", NULL);
+    } else {
+        notify_mention = prefs_get_boolean(PREF_NOTIFY_ROOM_MENTION);
+    }
+    if (notify_mention && mention) {
+        return TRUE;
+    }
+
+    gboolean notify_trigger = FALSE;
+    if (g_key_file_has_key(prefs, roomjid, "notify.trigger", NULL)) {
+        notify_trigger = g_key_file_get_boolean(prefs, roomjid, "notify.trigger", NULL);
+    } else {
+        notify_trigger = prefs_get_boolean(PREF_NOTIFY_ROOM_TRIGGER);
+    }
+    if (notify_trigger && trigger) {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+void
+prefs_set_room_notify(const char *const roomjid, gboolean value)
+{
+    g_key_file_set_boolean(prefs, roomjid, "notify", value);
+    _save_prefs();
+}
+
+void
+prefs_set_room_notify_mention(const char *const roomjid, gboolean value)
+{
+    g_key_file_set_boolean(prefs, roomjid, "notify.mention", value);
+    _save_prefs();
+}
+
+void
+prefs_set_room_notify_trigger(const char *const roomjid, gboolean value)
+{
+    g_key_file_set_boolean(prefs, roomjid, "notify.trigger", value);
+    _save_prefs();
+}
+
+gboolean
+prefs_has_room_notify(const char *const roomjid)
+{
+    return g_key_file_has_key(prefs, roomjid, "notify", NULL);
+}
+
+gboolean
+prefs_has_room_notify_mention(const char *const roomjid)
+{
+    return g_key_file_has_key(prefs, roomjid, "notify.mention", NULL);
+}
+
+gboolean
+prefs_has_room_notify_trigger(const char *const roomjid)
+{
+    return g_key_file_has_key(prefs, roomjid, "notify.trigger", NULL);
+}
+
+gboolean
+prefs_get_room_notify(const char *const roomjid)
+{
+    return g_key_file_get_boolean(prefs, roomjid, "notify", NULL);
+}
+
+gboolean
+prefs_get_room_notify_mention(const char *const roomjid)
+{
+    return g_key_file_get_boolean(prefs, roomjid, "notify.mention", NULL);
+}
+
+gboolean
+prefs_get_room_notify_trigger(const char *const roomjid)
+{
+    return g_key_file_get_boolean(prefs, roomjid, "notify.trigger", NULL);
+}
+
+gboolean
+prefs_reset_room_notify(const char *const roomjid)
+{
+    if (g_key_file_has_group(prefs, roomjid)) {
+        g_key_file_remove_group(prefs, roomjid, NULL);
+        _save_prefs();
+        return TRUE;
+    }
+
+    return FALSE;
 }
 
 gboolean
@@ -204,7 +434,6 @@ prefs_free_string(char *pref)
         g_free(pref);
     }
 }
-
 
 void
 prefs_set_string(preference_t pref, char *value)
@@ -315,6 +544,23 @@ prefs_set_autoping(gint value)
 }
 
 gint
+prefs_get_autoping_timeout(void)
+{
+    if (!g_key_file_has_key(prefs, PREF_GROUP_CONNECTION, "autoping.timeout", NULL)) {
+        return 10;
+    } else {
+        return g_key_file_get_integer(prefs, PREF_GROUP_CONNECTION, "autoping.timeout", NULL);
+    }
+}
+
+void
+prefs_set_autoping_timeout(gint value)
+{
+    g_key_file_set_integer(prefs, PREF_GROUP_CONNECTION, "autoping.timeout", value);
+    _save_prefs();
+}
+
+gint
 prefs_get_autoaway_time(void)
 {
     gint result = g_key_file_get_integer(prefs, PREF_GROUP_PRESENCE, "autoaway.awaytime", NULL);
@@ -344,6 +590,51 @@ prefs_set_autoxa_time(gint value)
 {
     g_key_file_set_integer(prefs, PREF_GROUP_PRESENCE, "autoaway.xatime", value);
     _save_prefs();
+}
+
+void
+prefs_set_tray_timer(gint value)
+{
+    g_key_file_set_integer(prefs, PREF_GROUP_NOTIFICATIONS, "tray.timer", value);
+    _save_prefs();
+}
+
+gint
+prefs_get_tray_timer(void)
+{
+    gint result = g_key_file_get_integer(prefs, PREF_GROUP_NOTIFICATIONS, "tray.timer", NULL);
+
+    if (result == 0) {
+        return 5;
+    } else {
+        return result;
+    }
+}
+
+gchar**
+prefs_get_plugins(void)
+{
+    if (!g_key_file_has_group(prefs, "plugins")) {
+        return NULL;
+    }
+    if (!g_key_file_has_key(prefs, "plugins", "load", NULL)) {
+        return NULL;
+    }
+
+    return g_key_file_get_string_list(prefs, "plugins", "load", NULL, NULL);
+}
+
+void
+prefs_add_plugin(const char *const name)
+{
+    conf_string_list_add(prefs, "plugins", "load", name);
+    _save_prefs();
+}
+
+void
+prefs_free_plugins(gchar **plugins)
+{
+    g_strfreev(plugins);
 }
 
 void
@@ -540,6 +831,108 @@ prefs_clear_roster_resource_char(void)
     _save_prefs();
 }
 
+char
+prefs_get_roster_private_char(void)
+{
+    char result = 0;
+
+    char *resultstr = g_key_file_get_string(prefs, PREF_GROUP_UI, "roster.private.char", NULL);
+    if (!resultstr) {
+        result =  0;
+    } else {
+        result = resultstr[0];
+    }
+    free(resultstr);
+
+    return result;
+}
+
+void
+prefs_set_roster_private_char(char ch)
+{
+    char str[2];
+    str[0] = ch;
+    str[1] = '\0';
+
+    g_key_file_set_string(prefs, PREF_GROUP_UI, "roster.private.char", str);
+    _save_prefs();
+}
+
+void
+prefs_clear_roster_private_char(void)
+{
+    g_key_file_remove_key(prefs, PREF_GROUP_UI, "roster.private.char", NULL);
+    _save_prefs();
+}
+
+char
+prefs_get_roster_room_char(void)
+{
+    char result = 0;
+
+    char *resultstr = g_key_file_get_string(prefs, PREF_GROUP_UI, "roster.rooms.char", NULL);
+    if (!resultstr) {
+        result =  0;
+    } else {
+        result = resultstr[0];
+    }
+    free(resultstr);
+
+    return result;
+}
+
+void
+prefs_set_roster_room_char(char ch)
+{
+    char str[2];
+    str[0] = ch;
+    str[1] = '\0';
+
+    g_key_file_set_string(prefs, PREF_GROUP_UI, "roster.rooms.char", str);
+    _save_prefs();
+}
+
+void
+prefs_clear_roster_room_char(void)
+{
+    g_key_file_remove_key(prefs, PREF_GROUP_UI, "roster.rooms.char", NULL);
+    _save_prefs();
+}
+
+char
+prefs_get_roster_room_private_char(void)
+{
+    char result = 0;
+
+    char *resultstr = g_key_file_get_string(prefs, PREF_GROUP_UI, "roster.rooms.private.char", NULL);
+    if (!resultstr) {
+        result =  0;
+    } else {
+        result = resultstr[0];
+    }
+    free(resultstr);
+
+    return result;
+}
+
+void
+prefs_set_roster_room_private_char(char ch)
+{
+    char str[2];
+    str[0] = ch;
+    str[1] = '\0';
+
+    g_key_file_set_string(prefs, PREF_GROUP_UI, "roster.rooms.private.char", str);
+    _save_prefs();
+}
+
+void
+prefs_clear_roster_room_private_char(void)
+{
+    g_key_file_remove_key(prefs, PREF_GROUP_UI, "roster.rooms.pruvate.char", NULL);
+    _save_prefs();
+}
+
 gint
 prefs_get_roster_contact_indent(void)
 {
@@ -604,6 +997,49 @@ prefs_set_roster_presence_indent(gint value)
 {
     g_key_file_set_integer(prefs, PREF_GROUP_UI, "roster.presence.indent", value);
     _save_prefs();
+}
+
+gboolean
+prefs_add_room_notify_trigger(const char * const text)
+{
+    gboolean res = conf_string_list_add(prefs, PREF_GROUP_NOTIFICATIONS, "room.trigger.list", text);
+    _save_prefs();
+
+    if (res) {
+        autocomplete_add(room_trigger_ac, text);
+    }
+
+    return res;
+}
+
+gboolean
+prefs_remove_room_notify_trigger(const char * const text)
+{
+    gboolean res = conf_string_list_remove(prefs, PREF_GROUP_NOTIFICATIONS, "room.trigger.list", text);
+    _save_prefs();
+
+    if (res) {
+        autocomplete_remove(room_trigger_ac, text);
+    }
+
+    return res;
+}
+
+GList*
+prefs_get_room_notify_triggers(void)
+{
+    GList *result = NULL;
+    gsize len = 0;
+    gchar **triggers = g_key_file_get_string_list(prefs, PREF_GROUP_NOTIFICATIONS, "room.trigger.list", &len, NULL);
+
+    int i;
+    for (i = 0; i < len; i++) {
+        result = g_list_append(result, strdup(triggers[i]));
+    }
+
+    g_strfreev(triggers);
+
+    return result;
 }
 
 gboolean
@@ -675,6 +1111,27 @@ prefs_get_aliases(void)
 
         return result;
     }
+}
+
+gchar*
+prefs_get_inputrc(void)
+{
+    gchar *xdg_config = xdg_get_config_home();
+    GString *inputrc_file = g_string_new(xdg_config);
+    g_free(xdg_config);
+
+    g_string_append(inputrc_file, "/profanity/inputrc");
+
+    if (g_file_test(inputrc_file->str, G_FILE_TEST_IS_REGULAR)) {
+        gchar *result = strdup(inputrc_file->str);
+        g_string_free(inputrc_file, TRUE);
+
+        return result;
+    }
+
+    g_string_free(inputrc_file, TRUE);
+
+    return NULL;
 }
 
 void
@@ -764,29 +1221,48 @@ _get_group(preference_t pref)
         case PREF_ROSTER_EMPTY:
         case PREF_ROSTER_BY:
         case PREF_ROSTER_ORDER:
+        case PREF_ROSTER_UNREAD:
         case PREF_ROSTER_COUNT:
+        case PREF_ROSTER_COUNT_ZERO:
         case PREF_ROSTER_PRIORITY:
         case PREF_ROSTER_WRAP:
         case PREF_ROSTER_RESOURCE_JOIN:
+        case PREF_ROSTER_CONTACTS:
+        case PREF_ROSTER_UNSUBSCRIBED:
+        case PREF_ROSTER_ROOMS:
+        case PREF_ROSTER_ROOMS_POS:
+        case PREF_ROSTER_ROOMS_BY:
+        case PREF_ROSTER_ROOMS_ORDER:
+        case PREF_ROSTER_ROOMS_UNREAD:
+        case PREF_ROSTER_PRIVATE:
         case PREF_RESOURCE_TITLE:
         case PREF_RESOURCE_MESSAGE:
         case PREF_ENC_WARN:
         case PREF_INPBLOCK_DYNAMIC:
         case PREF_TLS_SHOW:
+        case PREF_CONSOLE_MUC:
+        case PREF_CONSOLE_PRIVATE:
+        case PREF_CONSOLE_CHAT:
             return PREF_GROUP_UI;
         case PREF_STATES:
         case PREF_OUTTYPE:
             return PREF_GROUP_CHATSTATES;
         case PREF_NOTIFY_TYPING:
         case PREF_NOTIFY_TYPING_CURRENT:
-        case PREF_NOTIFY_MESSAGE:
-        case PREF_NOTIFY_MESSAGE_CURRENT:
-        case PREF_NOTIFY_MESSAGE_TEXT:
+        case PREF_NOTIFY_CHAT:
+        case PREF_NOTIFY_CHAT_CURRENT:
+        case PREF_NOTIFY_CHAT_TEXT:
         case PREF_NOTIFY_ROOM:
+        case PREF_NOTIFY_ROOM_MENTION:
+        case PREF_NOTIFY_ROOM_TRIGGER:
         case PREF_NOTIFY_ROOM_CURRENT:
         case PREF_NOTIFY_ROOM_TEXT:
         case PREF_NOTIFY_INVITE:
         case PREF_NOTIFY_SUB:
+        case PREF_NOTIFY_MENTION_CASE_SENSITIVE:
+        case PREF_NOTIFY_MENTION_WHOLE_WORD:
+        case PREF_TRAY:
+        case PREF_TRAY_READ:
             return PREF_GROUP_NOTIFICATIONS;
         case PREF_CHLOG:
         case PREF_GRLOG:
@@ -811,6 +1287,8 @@ _get_group(preference_t pref)
             return PREF_GROUP_OTR;
         case PREF_PGP_LOG:
             return PREF_GROUP_PGP;
+        case PREF_BOOKMARK_INVITE:
+            return PREF_GROUP_MUC;
         default:
             return NULL;
     }
@@ -837,6 +1315,10 @@ _get_key(preference_t pref)
             return "titlebar.goodbye";
         case PREF_FLASH:
             return "flash";
+        case PREF_TRAY:
+            return "tray";
+        case PREF_TRAY_READ:
+            return "tray.read";
         case PREF_INTYPE:
             return "intype";
         case PREF_HISTORY:
@@ -869,14 +1351,18 @@ _get_key(preference_t pref)
             return "typing";
         case PREF_NOTIFY_TYPING_CURRENT:
             return "typing.current";
-        case PREF_NOTIFY_MESSAGE:
+        case PREF_NOTIFY_CHAT:
             return "message";
-        case PREF_NOTIFY_MESSAGE_CURRENT:
+        case PREF_NOTIFY_CHAT_CURRENT:
             return "message.current";
-        case PREF_NOTIFY_MESSAGE_TEXT:
+        case PREF_NOTIFY_CHAT_TEXT:
             return "message.text";
         case PREF_NOTIFY_ROOM:
             return "room";
+        case PREF_NOTIFY_ROOM_TRIGGER:
+            return "room.trigger";
+        case PREF_NOTIFY_ROOM_MENTION:
+            return "room.mention";
         case PREF_NOTIFY_ROOM_CURRENT:
             return "room.current";
         case PREF_NOTIFY_ROOM_TEXT:
@@ -885,6 +1371,10 @@ _get_key(preference_t pref)
             return "invite";
         case PREF_NOTIFY_SUB:
             return "sub";
+        case PREF_NOTIFY_MENTION_CASE_SENSITIVE:
+            return "room.mention.casesensitive";
+        case PREF_NOTIFY_MENTION_WHOLE_WORD:
+            return "room.mention.wholeword";
         case PREF_CHLOG:
             return "chlog";
         case PREF_GRLOG:
@@ -947,14 +1437,34 @@ _get_key(preference_t pref)
             return "roster.by";
         case PREF_ROSTER_ORDER:
             return "roster.order";
+        case PREF_ROSTER_UNREAD:
+            return "roster.unread";
         case PREF_ROSTER_COUNT:
             return "roster.count";
+        case PREF_ROSTER_COUNT_ZERO:
+            return "roster.count.zero";
         case PREF_ROSTER_PRIORITY:
             return "roster.priority";
         case PREF_ROSTER_WRAP:
             return "roster.wrap";
         case PREF_ROSTER_RESOURCE_JOIN:
             return "roster.resource.join";
+        case PREF_ROSTER_CONTACTS:
+            return "roster.contacts";
+        case PREF_ROSTER_UNSUBSCRIBED:
+            return "roster.unsubscribed";
+        case PREF_ROSTER_ROOMS:
+            return "roster.rooms";
+        case PREF_ROSTER_ROOMS_POS:
+            return "roster.rooms.pos";
+        case PREF_ROSTER_ROOMS_BY:
+            return "roster.rooms.by";
+        case PREF_ROSTER_ROOMS_ORDER:
+            return "roster.rooms.order";
+        case PREF_ROSTER_ROOMS_UNREAD:
+            return "roster.rooms.unread";
+        case PREF_ROSTER_PRIVATE:
+            return "roster.private";
         case PREF_RESOURCE_TITLE:
             return "resource.title";
         case PREF_RESOURCE_MESSAGE:
@@ -971,6 +1481,14 @@ _get_key(preference_t pref)
             return "tls.show";
         case PREF_LASTACTIVITY:
             return "lastactivity";
+        case PREF_CONSOLE_MUC:
+            return "console.muc";
+        case PREF_CONSOLE_PRIVATE:
+            return "console.private";
+        case PREF_CONSOLE_CHAT:
+            return "console.chat";
+        case PREF_BOOKMARK_INVITE:
+            return "bookmark.invite";
         default:
             return NULL;
     }
@@ -987,8 +1505,9 @@ _get_default_boolean(preference_t pref)
         case PREF_AUTOAWAY_CHECK:
         case PREF_LOG_ROTATE:
         case PREF_LOG_SHARED:
-        case PREF_NOTIFY_MESSAGE:
-        case PREF_NOTIFY_MESSAGE_CURRENT:
+        case PREF_NOTIFY_CHAT:
+        case PREF_NOTIFY_CHAT_CURRENT:
+        case PREF_NOTIFY_ROOM:
         case PREF_NOTIFY_ROOM_CURRENT:
         case PREF_NOTIFY_TYPING:
         case PREF_NOTIFY_TYPING_CURRENT:
@@ -1006,11 +1525,17 @@ _get_default_boolean(preference_t pref)
         case PREF_ROSTER:
         case PREF_ROSTER_OFFLINE:
         case PREF_ROSTER_EMPTY:
-        case PREF_ROSTER_COUNT:
+        case PREF_ROSTER_COUNT_ZERO:
         case PREF_ROSTER_PRIORITY:
         case PREF_ROSTER_RESOURCE_JOIN:
+        case PREF_ROSTER_CONTACTS:
+        case PREF_ROSTER_UNSUBSCRIBED:
+        case PREF_ROSTER_ROOMS:
         case PREF_TLS_SHOW:
         case PREF_LASTACTIVITY:
+        case PREF_NOTIFY_MENTION_WHOLE_WORD:
+        case PREF_TRAY_READ:
+        case PREF_BOOKMARK_INVITE:
             return TRUE;
         default:
             return FALSE;
@@ -1026,8 +1551,6 @@ _get_default_string(preference_t pref)
     {
         case PREF_AUTOAWAY_MODE:
             return "off";
-        case PREF_NOTIFY_ROOM:
-            return "on";
         case PREF_OTR_LOG:
             return "redact";
         case PREF_OTR_POLICY:
@@ -1038,8 +1561,22 @@ _get_default_string(preference_t pref)
             return "all";
         case PREF_ROSTER_BY:
             return "presence";
+        case PREF_ROSTER_COUNT:
+            return "unread";
         case PREF_ROSTER_ORDER:
             return "presence";
+        case PREF_ROSTER_UNREAD:
+            return "after";
+        case PREF_ROSTER_ROOMS_POS:
+            return "last";
+        case PREF_ROSTER_ROOMS_BY:
+            return "none";
+        case PREF_ROSTER_ROOMS_ORDER:
+            return "name";
+        case PREF_ROSTER_ROOMS_UNREAD:
+            return "after";
+        case PREF_ROSTER_PRIVATE:
+            return "room";
         case PREF_TIME_CONSOLE:
             return "%H:%M:%S";
         case PREF_TIME_CHAT:
@@ -1058,6 +1595,10 @@ _get_default_string(preference_t pref)
             return "%d/%m/%y %H:%M:%S";
         case PREF_PGP_LOG:
             return "redact";
+        case PREF_CONSOLE_MUC:
+        case PREF_CONSOLE_PRIVATE:
+        case PREF_CONSOLE_CHAT:
+            return "all";
         default:
             return NULL;
     }

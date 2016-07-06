@@ -1,7 +1,7 @@
 /*
  * bookmark.h
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -36,15 +36,6 @@
 #define XMPP_BOOKMARK_H
 
 #include <glib.h>
-
-struct bookmark_t {
-    char *jid;
-    char *nick;
-    char *password;
-    gboolean autojoin;
-};
-
-typedef struct bookmark_t Bookmark;
 
 void bookmark_request(void);
 

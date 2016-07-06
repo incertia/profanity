@@ -1,7 +1,7 @@
 /*
  * common.c
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -33,8 +33,9 @@
  */
 #include "config.h"
 
-#include <assert.h>
 #include <errno.h>
+#include <sys/select.h>
+#include <assert.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -44,6 +45,12 @@
 #include <curl/curl.h>
 #include <curl/easy.h>
 #include <glib.h>
+
+#ifdef HAVE_NCURSESW_NCURSES_H
+#include <ncursesw/ncurses.h>
+#elif HAVE_NCURSES_H
+#include <ncurses.h>
+#endif
 
 #include "tools/p_sha1.h"
 
@@ -190,18 +197,6 @@ str_replace(const char *string, const char *substr,
     }
 
     return newstr;
-}
-
-gboolean
-str_contains_str(const char *const searchstr, const char *const substr)
-{
-    if (!searchstr) {
-        return FALSE;
-    }
-    if (!substr) {
-        return FALSE;
-    }
-    return g_strrstr(searchstr, substr) != NULL;
 }
 
 int
@@ -662,3 +657,32 @@ is_notify_enabled(void)
 
     return notify_enabled;
 }
+
+GSList*
+prof_occurrences(const char *const needle, const char *const haystack, int offset, gboolean whole_word, GSList **result)
+{
+    if (needle == NULL || haystack == NULL) {
+        return *result;
+    }
+
+    if (g_str_has_prefix(&haystack[offset], needle)) {
+        if (whole_word) {
+            char *prev = g_utf8_prev_char(&haystack[offset]);
+            char *next = g_utf8_next_char(&haystack[offset] + strlen(needle) - 1);
+            gunichar prevu = g_utf8_get_char(prev);
+            gunichar nextu = g_utf8_get_char(next);
+            if (!g_unichar_isalnum(prevu) && !g_unichar_isalnum(nextu)) {
+                *result = g_slist_append(*result, GINT_TO_POINTER(offset));
+            }
+        } else {
+            *result = g_slist_append(*result, GINT_TO_POINTER(offset));
+        }
+    }
+
+    if (haystack[offset+1] != '\0') {
+        *result = prof_occurrences(needle, haystack, offset+1, whole_word, result);
+    }
+
+    return *result;
+}
+

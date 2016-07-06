@@ -1,7 +1,7 @@
 /*
  * mucconfwin.c
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -33,6 +33,7 @@
  */
 
 #include <assert.h>
+#include <stdlib.h>
 
 #include "ui/ui.h"
 #include "ui/window.h"
@@ -327,4 +328,21 @@ _mucconfwin_form_field(ProfWin *window, char *tag, FormField *field)
     default:
         break;
     }
+}
+
+char*
+mucconfwin_get_string(ProfMucConfWin *confwin)
+{
+    assert(confwin != NULL);
+
+    GString *res = g_string_new("");
+
+    char *title = win_get_title((ProfWin*)confwin);
+    g_string_append(res, title);
+    free(title);
+
+    char *resstr = res->str;
+    g_string_free(res, FALSE);
+
+    return resstr;
 }

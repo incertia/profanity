@@ -1,7 +1,7 @@
 /*
- * command.h
+ * disco.c
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -32,44 +32,34 @@
  *
  */
 
-#ifndef COMMAND_H
-#define COMMAND_H
+#include <string.h>
+#include <stdlib.h>
 
 #include <glib.h>
 
-#include "xmpp/form.h"
-#include "ui/ui.h"
+static GList *disco_features = NULL;
 
-GHashTable *commands;
+void
+disco_add_feature(char* feature)
+{
+    if (feature == NULL) {
+        return;
+    }
 
-void cmd_init(void);
-void cmd_uninit(void);
+    disco_features = g_list_append(disco_features, strdup(feature));
+}
 
-char* cmd_autocomplete(ProfWin *window, const char *const input);
-void cmd_reset_autocomplete(ProfWin *window);
-void cmd_autocomplete_add(char *value);
-void cmd_autocomplete_remove(char *value);
-void cmd_autocomplete_add_form_fields(DataForm *form);
-void cmd_autocomplete_remove_form_fields(DataForm *form);
-void cmd_alias_add(char *value);
-void cmd_alias_remove(char *value);
+GList*
+disco_get_features(void)
+{
+    return disco_features;
+}
 
-gboolean cmd_valid_tag(const char *const str);
-gboolean cmd_has_tag(Command *pcmd, const char *const tag);
-
-gboolean cmd_process_input(ProfWin *window, char *inp);
-void cmd_execute_connect(ProfWin *window, const char *const account);
-
-gboolean cmd_exists(char *cmd);
-
-GSList* cmd_get_basic_help(void);
-GSList* cmd_get_settings_help(void);
-GSList* cmd_get_presence_help(void);
-
-void cmd_history_append(char *inp);
-char* cmd_history_previous(char *inp);
-char* cmd_history_next(char *inp);
-
-void command_docgen(void);
-
-#endif
+void
+disco_close(void)
+{
+    if (disco_features) {
+        g_list_free_full(disco_features, free);
+        disco_features = NULL;
+    }
+}

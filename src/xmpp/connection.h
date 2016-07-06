@@ -1,7 +1,7 @@
 /*
  * connection.h
  *
- * Copyright (C) 2012 - 2015 James Booth <boothj5@gmail.com>
+ * Copyright (C) 2012 - 2016 James Booth <boothj5@gmail.com>
  *
  * This file is part of Profanity.
  *
@@ -35,21 +35,29 @@
 #ifndef XMPP_CONNECTION_H
 #define XMPP_CONNECTION_H
 
-#include "config.h"
+#include "xmpp/xmpp.h"
 
-#ifdef HAVE_LIBMESODE
-#include <mesode.h>
-#endif
-#ifdef HAVE_LIBSTROPHE
-#include <strophe.h>
-#endif
+void connection_init(void);
+void connection_shutdown(void);
 
-#include "resource.h"
+jabber_conn_status_t connection_connect(const char *const fulljid, const char *const passwd, const char *const altdomain, int port,
+    const char *const tls_policy);
+void connection_disconnect(void);
+void connection_set_disconnected(void);
+
+void connection_set_presence_msg(const char *const message);
+void connection_set_priority(const int priority);
+void connection_set_priority(int priority);
+void connection_set_disco_items(GSList *items);
 
 xmpp_conn_t* connection_get_conn(void);
 xmpp_ctx_t* connection_get_ctx(void);
-void connection_set_priority(int priority);
-void connection_set_presence_message(const char *const message);
+char *connection_get_domain(void);
+char* connection_jid_for_feature(const char *const feature);
+GHashTable* connection_get_features(const char *const jid);
+
+void connection_clear_data(void);
+
 void connection_add_available_resource(Resource *resource);
 void connection_remove_available_resource(const char *const resource);
 
